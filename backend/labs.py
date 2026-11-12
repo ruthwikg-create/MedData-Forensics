@@ -253,8 +253,12 @@ def run_shortcut(exp_id,progress=None):
     """Source-label association and occlusion sensitivity; neither establishes causation."""
     with Session() as db:
         e=db.get(Experiment,exp_id);d,samples=_load(db,e.dataset_id);base,model=_latest_model(db,d.id)
-        test=[s for s in samples if s.split=='test'][:160]
-        if not test:raise ValueError('Requires test images')
+        train=[s for s in samples if s.split=='train']
+        validation=[s for s in samples if s.split=='val']
+        test_all=[s for s in samples if s.split=='test']
+        if not test_all:raise ValueError('Requires test images')
+        _,screened_test,integrity=_evaluation_integrity(train,validation,test_all)
+        test=screened_test[:160]
         if progress:progress(20,'Testing control and region-masked images')
         def mask_features(s,kind):
             with Image.open(safe_path(s.relpath)) as im:
@@ -270,7 +274,8 @@ def run_shortcut(exp_id,progress=None):
         flip=int(np.sum(np.argmax(orig,axis=1)!=np.argmax(masked,axis=1)))
         conf_change=float(np.mean(np.abs(np.max(orig,axis=1)-np.max(masked,axis=1))))
         output={'baseline_experiment_id':base.id,'test_n':len(test),'region':'upper-left approximately 14% corner','prediction_flip_rate':flip/len(test),
-            'mean_max_confidence_change':conf_change,'distribution_shift_test':'controlled corner masking','caveat':'Image occlusion may change important image content; changes do not prove shortcut learning. Test confounds and controls before causal claims.',
+            'mean_max_confidence_change':conf_change,'distribution_shift_test':'controlled corner masking',
+            'evaluation_integrity':integrity,'caveat':'Image occlusion may change important image content; changes do not prove shortcut learning. Test confounds and controls before causal claims.',
             'manifest':_manifest(d,jl(e.config),42)}
         e.result=jd(output);e.status='completed';e.finished_at=now();db.commit()
         if progress:progress(100,'Shortcut probe complete')
