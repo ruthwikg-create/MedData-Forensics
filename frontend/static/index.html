@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#f6f8f7"><meta name="description" content="Local-first biomedical dataset investigation and model reliability research workbench."><title>MedData Forensics — Research Workbench</title><link rel="stylesheet" href="/assets/styles.css"></head>
+<body>
+<a class="skip-link" href="#main">Skip to main content</a>
+<div class="shell">
+  <aside class="sidebar" id="sidebar" aria-label="Primary navigation">
+    <div class="brand"><div class="brand-mark" aria-hidden="true"><svg viewBox="0 0 36 36" fill="none"><path d="M8 8h20v20H8z" stroke="currentColor" stroke-width="1.8" rx="2"/><path d="M12 24l5-12 4 8 3-5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="26" cy="12" r="2" fill="currentColor"/></svg></div><div><strong>MedData</strong><span>FORENSICS</span></div></div>
+    <div class="side-caption">RESEARCH WORKBENCH</div>
+    <nav class="navigation" id="nav">
+      <div class="nav-group-label">WORKSPACE</div>
+      <button class="nav-link active" data-view="overview" type="button"><span class="icon" data-icon="layout"></span>Overview</button>
+      <button class="nav-link" data-view="dna" type="button"><span class="icon" data-icon="database"></span>Dataset DNA</button>
+      <button class="nav-link" data-view="audit" type="button"><span class="icon" data-icon="search"></span>Forensic Audit</button>
+      <button class="nav-link" data-view="graph" type="button"><span class="icon" data-icon="network"></span>Evidence Graph</button>
+      <button class="nav-link" data-view="review" type="button"><span class="icon" data-icon="check"></span>Review Center</button>
+      <div class="nav-group-label second">RESEARCH LABS</div>
+      <button class="nav-link" data-view="shortcut" type="button"><span class="icon" data-icon="scan"></span>Shortcut Inspector</button>
+      <button class="nav-link" data-view="counterfactual" type="button"><span class="icon" data-icon="layers"></span>Counterfactual Lab</button>
+      <button class="nav-link" data-view="cross" type="button"><span class="icon" data-icon="git"></span>Cross-Dataset Lab</button>
+      <button class="nav-link" data-view="impact" type="button"><span class="icon" data-icon="chart"></span>Impact Simulator</button>
+      <button class="nav-link" data-view="failures" type="button"><span class="icon" data-icon="activity"></span>Failure Explorer</button>
+      <button class="nav-link" data-view="repro" type="button"><span class="icon" data-icon="flask"></span>Reproducibility</button>
+      <div class="nav-group-label second">SYSTEM</div>
+      <button class="nav-link" data-view="privacy" type="button"><span class="icon" data-icon="shield"></span>Privacy & Integrity</button>
+    </nav>
+    <div class="sidebar-bottom"><div class="side-meta"><span class="live-dot"></span> Local research environment</div><div class="side-detail">No cloud inference · CPU-first</div><div class="build-label">Research build 0.8.0</div></div>
+  </aside>
+  <div class="content-area">
+    <header class="topbar"><button type="button" class="icon-btn menu-toggle" id="menuToggle" aria-label="Open navigation" aria-expanded="false"><span class="icon" data-icon="menu"></span></button><div class="crumb"><span>Research workspace</span><span class="crumb-slash">/</span><strong id="crumbCurrent">Overview</strong></div><div class="top-actions"><label class="dataset-picker"><span class="sr-only">Active dataset</span><select id="datasetSelect" aria-label="Active dataset"><option value="">No dataset loaded</option></select></label><button class="btn btn-primary btn-small" id="importTrigger" type="button"><span class="icon" data-icon="plus"></span> Add dataset</button><button type="button" class="icon-btn" id="themeToggle" aria-label="Switch to dark mode" title="Toggle light and dark mode"><span class="icon" data-icon="layers"></span></button><button type="button" class="icon-btn" id="jobsTrigger" aria-label="Show analysis jobs" title="Analysis jobs"><span class="icon" data-icon="bell"></span><span class="job-indicator" id="jobIndicator" hidden></span></button></div></header>
+    <main class="main" id="main" tabindex="-1"><div class="loading-screen"><div class="spinner"></div><p>Preparing research workspace…</p></div></main>
+    <footer class="app-footer"><span>Research software · Not for clinical diagnosis or medical-device certification</span><span>Built for inspectable evidence</span></footer>
+  </div>
+</div>
+<div class="toast-stack" id="toastStack" aria-live="polite"></div>
+<div class="modal-backdrop" id="modalBackdrop" hidden><section class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><div class="modal-header"><div><div class="eyebrow">MEDDATA FORENSICS</div><h2 id="modalTitle">Details</h2></div><button class="icon-btn" id="modalClose" aria-label="Close dialog"><span class="icon" data-icon="x"></span></button></div><div class="modal-body" id="modalBody"></div></section></div>
+<div class="mobile-overlay" id="mobileOverlay" hidden></div>
+<script src="/assets/app.js" defer></script>
+</body></html>
