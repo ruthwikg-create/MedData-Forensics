@@ -152,3 +152,16 @@ The current implementation does **not** establish the answer. Controlled synthet
 Every implemented module runs on a normal Windows laptop, using CPU-only Python libraries and locally stored research data. Initial evaluation works with synthetic shapes, and real-data validation requires authorized public datasets, not access to medical equipment.
 
 License for code: MIT. Third-party imported datasets are **not** covered by the code license.
+
+
+## Navigation and empty datasets
+
+All research sections can be opened before a dataset is imported. Each page explains its own purpose and the steps required to use it. No dataset-specific results are shown until data is loaded; this is expected behavior. In particular, **Counterfactual Lab**, **Shortcut Inspector**, **Cross-Dataset Lab** and **Impact Simulator** must not silently display the Overview page when the dataset list is empty.
+
+To begin, choose **New sandbox** (safe synthetic images) or **Add dataset** (an authorized research dataset). The application returns you to the section you were using after creating a sandbox. For model-based labs, train the CPU baseline first in **Model Failure Explorer**.
+
+The frontend routing regression suite runs without installing JavaScript packages:
+
+```powershell
+node --test tests/test_frontend_routes.cjs
+```

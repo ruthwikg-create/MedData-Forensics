@@ -6,3 +6,22 @@
 /* Research-grade dark mode: preserves semantic status hierarchy and contrast */
 :root[data-theme="dark"]{color-scheme:dark;--bg:#101b21;--paper:#18262d;--surface:#213139;--border:#32454c;--border-strong:#50666b;--ink:#ecf2f0;--muted:#b1c5c7;--faint:#90a8ad;--blue:#9bbefa;--blue-weak:#25384f;--teal:#7fd1bc;--teal-weak:#203f3b;--amber:#edbc7d;--amber-weak:#413626;--red:#f49b93;--red-weak:#482c2f;--shadow:0 10px 25px #010b0f22}
 :root[data-theme="dark"] .btn-primary{background:#446db8;border-color:#446db8;color:#fff}:root[data-theme="dark"] .btn-teal{background:#1b7667;border-color:#1b7667;color:#fff}:root[data-theme="dark"] .btn-danger{background:#36252a;color:#ffb4ad;border-color:#765259}:root[data-theme="dark"] .action-banner{background:#223c3d;border-color:#36595a}:root[data-theme="dark"] .action-banner p{color:#b1c6c3}:root[data-theme="dark"] .info-stripe{color:#c8dafa;border-color:#40546d}:root[data-theme="dark"] .info-stripe.warn{color:#f0ca94;border-color:#6a5539}:root[data-theme="dark"] .info-stripe.green{color:#aee7d6;border-color:#355d52}:root[data-theme="dark"] .pill.blue{color:#b0caff;border-color:#395a78}:root[data-theme="dark"] .pill.green{color:#a6e4ce;border-color:#35695d}:root[data-theme="dark"] .pill.amber{color:#f2ca97;border-color:#64523b}:root[data-theme="dark"] .pill.red{color:#ffb5ab;border-color:#785053}:root[data-theme="dark"] .pill.ink{background:#30464a;color:#d4e6e5}:root[data-theme="dark"] .empty-icon,:root[data-theme="dark"] .lab-icon{background:#25413c;border-color:#3a655d}:root[data-theme="dark"] .node-graph{background:radial-gradient(circle at 16% 20%,#1d3335 0%,#15252c 65%)}:root[data-theme="dark"] .record img,:root[data-theme="dark"] .variant img,:root[data-theme="dark"] .comparison .image-panel img{background:#293940}:root[data-theme="dark"] .finding-row:hover{background:#20323a;border-color:#668a91}:root[data-theme="dark"] .ghost-card{background:#1b2b32}:root[data-theme="dark"] .table-wrap th{color:#b2c8c8}:root[data-theme="dark"] .tablesimple tr:hover td{background:#23343c}:root[data-theme="dark"] .lines{background:repeating-linear-gradient(0deg,transparent,transparent 23px,#42585a52 24px)}
+
+/* Contextual no-dataset onboarding: every research section explains its own workflow. */
+.onboarding-card{background:var(--paper);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);padding:clamp(22px,3vw,36px);max-width:980px;margin:0 auto}
+.onboarding-intro{display:flex;align-items:flex-start;gap:18px}
+.onboarding-icon{width:60px;height:60px;flex:0 0 60px;display:grid;place-items:center;background:var(--teal-weak);border:1px solid var(--border);border-radius:16px;color:var(--teal)}
+.onboarding-icon svg{height:28px;width:28px}
+.onboarding-intro .eyebrow{margin:0 0 10px}
+.onboarding-intro h2{font-size:clamp(21px,2.3vw,27px);letter-spacing:-.035em;line-height:1.3;margin:0 0 8px;color:var(--ink)}
+.onboarding-intro p{font-size:14px;line-height:1.65;color:var(--muted);max-width:700px;margin:0}
+.onboarding-prerequisite{display:flex;align-items:flex-start;gap:11px;color:var(--muted);background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;font-size:13px;line-height:1.55;margin:24px 0 26px}
+.onboarding-prerequisite .icon{flex-shrink:0;color:var(--blue)}
+.onboarding-prerequisite strong{color:var(--ink)}
+.onboarding-steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.onboarding-step{border:1px solid var(--border);border-radius:11px;padding:15px 16px;min-width:0}
+.onboarding-number{display:grid;place-items:center;width:28px;height:28px;border-radius:8px;background:var(--surface);border:1px solid var(--border);color:var(--teal);font-size:13px;font-weight:750;margin-bottom:12px}
+.onboarding-step p{font-size:13px;color:var(--muted);line-height:1.6;margin:0}
+.onboarding-actions{border-top:1px solid var(--border);padding-top:22px;margin-top:24px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.onboarding-actions .fine{flex:1 0 100%;margin-top:4px}
+@media(max-width:760px){.onboarding-steps{grid-template-columns:1fr}.onboarding-intro{gap:14px}.onboarding-icon{width:46px;height:46px;flex-basis:46px}.onboarding-actions .btn{width:100%;white-space:normal}}

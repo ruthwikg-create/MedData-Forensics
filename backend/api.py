@@ -29,7 +29,7 @@ async def lifespan(app):
     yield
     stop.set()
     if thread:thread.join(timeout=3)
-app=FastAPI(title='MedData Forensics',version='0.8.0-research',lifespan=lifespan,docs_url='/api/docs',openapi_url='/api/openapi.json')
+app=FastAPI(title='MedData Forensics',version='0.8.1-research',lifespan=lifespan,docs_url='/api/docs',openapi_url='/api/openapi.json')
 
 @app.middleware('http')
 async def security_middleware(request,call_next):
