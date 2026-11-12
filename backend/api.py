@@ -15,7 +15,7 @@ from .db import Session,DATA_ROOT,ARTIFACT_ROOT,Dataset,Sample,Finding,Review,Au
 from .security import safe_path,extract_auth,MAX_ARCHIVE_BYTES,sha_file,manifest_hash
 from .ingest import demo_dataset,import_zip,import_npz
 from .analysis_engine import forensic_graph,ranking_comparison
-from .labs import EXPERIMENT_RUNNERS
+from .labs import EXPERIMENT_RUNNERS,baseline_readiness
 from .worker import loop
 
 stop=threading.Event()
@@ -72,8 +72,11 @@ def finding_out(f):
       'audit_id':f.audit_id,'created_at':stamp(f.created_at),'detector':f.detector,'evidence':jl(f.evidence)}
 
 def experiment_out(e):
-    return {'id':e.id,'dataset_id':e.dataset_id,'kind':e.kind,'status':e.status,'config':jl(e.config),'result':jl(e.result),
+    out={'id':e.id,'dataset_id':e.dataset_id,'kind':e.kind,'status':e.status,'config':jl(e.config),'result':jl(e.result),
       'created_at':stamp(e.created_at),'finished_at':stamp(e.finished_at)}
+    if e.kind=='baseline':
+        out['artifact_available']=bool(e.status=='completed' and (ARTIFACT_ROOT/e.id/'baseline.joblib').is_file())
+    return out
 
 def get_dataset(db,id):
     item=db.get(Dataset,id)
@@ -94,7 +97,7 @@ def authorize_session(request:Request):
 
 @app.get('/api/health')
 def health():
-    return {'status':'ok','version':'0.9.0-research','analysis':'local research only','worker_enabled':os.getenv('MDF_NO_AUTOWORKER','0')!='1','storage':str(DATA_ROOT)}
+    return {'status':'ok','version':'0.9.2-research','analysis':'local research only','worker_enabled':os.getenv('MDF_NO_AUTOWORKER','0')!='1','storage':str(DATA_ROOT)}
 
 @app.get('/api/overview')
 def overview():
@@ -286,11 +289,27 @@ def rankings(did:str,budget:int=Query(15,ge=1,le=500)):
     with Session() as db:
         get_dataset(db,did);return ranking_comparison(db,did,budget)
 
+@app.get('/api/datasets/{did}/baseline-readiness')
+def get_baseline_readiness(did:str):
+    with Session() as db:
+        get_dataset(db,did)
+        return baseline_readiness(db,did)
+
 @app.post('/api/datasets/{did}/experiments')
 def create_experiment(did:str,payload:ExperimentInput):
     with Session() as db:
         get_dataset(db,did)
         if payload.kind not in EXPERIMENT_RUNNERS:raise HTTPException(422,'Unsupported experiment')
+        if payload.kind=='baseline':
+            readiness=baseline_readiness(db,did)
+            if not readiness['ready']:
+                raise HTTPException(422,'Baseline cannot start: '+' '.join(readiness['errors']))
+        if payload.kind in ('shortcut','counterfactual','cross_dataset'):
+            baseline=db.scalar(select(Experiment).where(
+                Experiment.dataset_id==did,Experiment.kind=='baseline',
+                Experiment.status=='completed').order_by(Experiment.created_at.desc()).limit(1))
+            if baseline is None or not (ARTIFACT_ROOT/baseline.id/'baseline.joblib').is_file():
+                raise HTTPException(422,'A completed baseline and its saved model file are required. Train the baseline for this dataset first.')
         e=Experiment(dataset_id=did,kind=payload.kind,config=jd(payload.config))
         db.add(e);db.flush();job=_enqueue(db,payload.kind,e.id);db.commit()
         return {'experiment_id':e.id,'job_id':job.id}
@@ -306,8 +325,16 @@ def job_out(j):
     return {'id':j.id,'target_id':j.target_id,'kind':j.kind,'status':j.status,'progress':j.progress,'message':j.message,'error':j.error,
       'created_at':stamp(j.created_at),'updated_at':stamp(j.updated_at)}
 @app.get('/api/jobs')
-def jobs():
-    with Session() as db:return [job_out(j) for j in db.scalars(select(Job).order_by(Job.created_at.desc()).limit(35)).all()]
+def jobs(dataset_id:str|None=None):
+    with Session() as db:
+        query=select(Job)
+        if dataset_id:
+            get_dataset(db,dataset_id)
+            exp_ids=select(Experiment.id).where(Experiment.dataset_id==dataset_id)
+            audit_ids=select(AuditRun.id).where(AuditRun.dataset_id==dataset_id)
+            from sqlalchemy import or_
+            query=query.where(or_(Job.target_id.in_(exp_ids),Job.target_id.in_(audit_ids)))
+        return [job_out(j) for j in db.scalars(query.order_by(Job.created_at.desc()).limit(50)).all()]
 @app.get('/api/jobs/{jid}')
 def job_detail(jid:str):
     with Session() as db:

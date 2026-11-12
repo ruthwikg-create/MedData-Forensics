@@ -32,7 +32,7 @@ const pct=x=>x==null?'—':(Number(x)*100).toFixed(1)+'%';
 const number=x=>Number(x||0).toLocaleString('en-US');
 const short=x=>String(x||'').length>24?String(x).slice(0,12)+'…'+String(x).slice(-8):String(x||'');
 const title=s=>s.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
-const state={view:'overview',datasets:[],did:'',detail:null,overview:null,findings:null,analysisJob:null,activeFilters:{kind:'',status:''},samplePage:1,reviewPage:1,modal:null};
+const state={view:'overview',datasets:[],did:'',detail:null,overview:null,jobs:[],baselineReadiness:null,findings:null,analysisJob:null,activeFilters:{kind:'',status:''},samplePage:1,reviewPage:1,modal:null};
 let lastFocused=null, refreshTimer=null;
 async function api(path,opt={}){
   const headers={...(opt.headers||{})}; const token=storage.get('sessionStorage','mdf-token');if(token)headers['X-MDF-Token']=token;
@@ -77,7 +77,23 @@ function card(title,inner,side=''){return `<section class="card card-padded"><di
 function sampleCard(s){return `<button type="button" class="record" data-sample="${esc(s.id)}"><img loading="lazy" alt="Dataset image sample ${esc(s.sample_id)}" src="${esc(s.image_url)}"><div class="record-content"><span class="record-name">${esc(s.sample_id)}</span><span class="record-label">${esc(s.label)} · ${esc(s.split)}</span></div></button>`;}
 function findingRow(f){const statusType=f.status==='confirmed'?'green':f.status==='rejected'?'red':f.status==='uncertain'?'amber':'';return `<button type="button" class="finding-row" data-finding="${esc(f.id)}"><span class="severity-line ${esc(f.severity)}"></span><span class="main-finding"><strong>${esc(f.title)}</strong><p>${esc(f.detail)}</p></span><span class="finding-end">${pill(f.status,statusType)}<span class="tiny">${(f.priority*100).toFixed(0)} priority</span></span>${icon('arrow')}</button>`;}
 function metric(v){return typeof v==='number'?v.toFixed(3):'—';}
-function bestExp(kind){return state.detail?.experiments?.find(e=>e.kind===kind&&e.status==='completed');}
+function bestExp(kind){return state.detail?.experiments?.find(e=>e.kind===kind&&e.status==='completed'&&(kind!=='baseline'||e.artifact_available!==false));}
+function latestJob(kind){return (state.jobs||[]).find(j=>j.kind===kind);}
+function jobFailureNotice(kind){
+ const j=latestJob(kind);
+ return j?.status==='failed'?notice('Most recent '+title(kind)+' job failed: '+(j.error||j.message||'Unknown error')+'. Open Analysis Jobs for details.','warn'):'';
+}
+function baselineReadinessCard(){
+ const r=state.baselineReadiness;if(!r)return '';
+ const counts=r.split_counts||{},rows=[['Train',counts.train||0],['Validation',counts.val||0],['Test',counts.test||0]];
+ const errors=(r.errors||[]).map(x=>'<li>'+esc(x)+'</li>').join('');
+ const warnings=(r.warnings||[]).map(x=>'<li>'+esc(x)+'</li>').join('');
+ const message=r.ready?'Basic dataset checks passed; training still checks decoded-pixel and group overlap.':'Training is blocked until the dataset problems below are corrected.';
+ return card('Baseline dataset readiness',
+  '<p class="fine">'+esc(message)+'</p><p class="fine" style="margin:10px 0">'+rows.map(([name,n])=>esc(name)+': '+number(n)).join(' · ')+'</p>'+
+  (errors?'<strong>Required fixes</strong><ul class="fine" style="margin:8px 0 12px 18px">'+errors+'</ul>':'')+
+  (warnings?'<strong>Research cautions</strong><ul class="fine" style="margin:8px 0 0 18px">'+warnings+'</ul>':''));
+}
 const EMPTY_GUIDES={
  dna:{icon:'database',label:'DATASET PROVENANCE',title:'Explore the anatomy of a dataset',description:'Inspect origin, license, recorded labels, image dimensions, splits and immutable version history.',steps:['Import an authorized image dataset or make a synthetic sandbox','Review source metadata, dataset fingerprints and split distributions','Inspect individual image records and dataset lineage']},
  audit:{icon:'search',label:'DATASET INTEGRITY',title:'Find hidden data-quality risks',description:'Look for exact or near-duplicate images, cross-split overlap, suspicious labels and inconsistent sources.',steps:['Create or import an image classification dataset','Run the forensic detector suite','Open each finding to inspect the evidence before review']},
@@ -210,6 +226,8 @@ function labBase(eyebrow,titleText,desc,kind,buttonText='Run research experiment
  const ready=!baselineRequired||Boolean(bestExp('baseline'));
  const e=bestExp(kind);
  html+=notice('These are research-only sensitivity experiments, not clinical validation or proof of causal shortcut learning.');
+ html+=jobFailureNotice(kind);
+ if(baselineRequired&&!ready)html+=jobFailureNotice('baseline');
  if(!ready)html+=`<div class="lab-prerequisite" role="status">${icon('alert')}<div><strong>First complete the CPU baseline</strong><p>The ${esc(titleText)} uses a saved model checkpoint. Without it, there is nothing to compare. A failed or queued model run does not satisfy this requirement.</p></div>${btn('Train baseline','baseline-launch','btn-primary')}</div>`;
  const action=kind==='counterfactual'?'counterfactual-launch':kind==='cross_dataset'?'cross-launch':kind;
  const launch=ready?`<button type="button" class="btn btn-primary" data-action="${esc(action)}">${icon('play')} ${esc(buttonText)}</button>`:
@@ -251,6 +269,7 @@ function renderImpact(){const {html,e}=labBase('INTERVENTION ANALYSIS','Audit Im
 }
 function renderFailures(){let html=head('PERFORMANCE INVESTIGATION','Model Failure Explorer','Inspect prediction mistakes, confusion matrices, uncertainty and performance across recorded source groups.',btn(icon('play')+' Run baseline','baseline-launch','btn-primary'));
  if(!state.detail)return html+needDataset();
+ html+=baselineReadinessCard()+jobFailureNotice('baseline');
  const e=bestExp('baseline');if(!e)return html+empty('No model evaluation yet','Train the CPU baseline to examine its test-split misclassifications.',btn('Train baseline model','baseline-launch','btn-primary'));
  const r=e.result.test||{},m=r.metrics||{},errors=(r.predictions||[]).filter(x=>!x.correct);
  html+=notice('These are research-label disagreements from a lightweight model. Misclassification is not a verified clinical diagnosis error.');
@@ -280,11 +299,13 @@ function renderError(error){$('#main').innerHTML=head('REQUEST ERROR','We could 
 async function loadCore(){const [overview,datasets]=await Promise.all([api('/api/overview'),api('/api/datasets')]);state.overview=overview;state.datasets=datasets;
  const preferred=state.did||storage.get('localStorage','mdf-dataset')||'';
  state.did=datasets.some(d=>d.id===preferred)?preferred:(datasets[0]?.id||'');
- if(state.did){state.detail=await api('/api/datasets/'+state.did)}else state.detail=null;
+ if(state.did){const [detail,jobs]=await Promise.all([api('/api/datasets/'+state.did),api('/api/jobs?dataset_id='+encodeURIComponent(state.did))]);state.detail=detail;state.jobs=jobs;}else{state.detail=null;state.jobs=[];state.baselineReadiness=null;}
  const sel=$('#datasetSelect');sel.innerHTML=`<option value="">No dataset loaded</option>`+datasets.map(d=>`<option value="${esc(d.id)}" ${d.id===state.did?'selected':''}>${esc(d.name)}</option>`).join('');
 }
 async function loadView(){const did=state.did;
  if(!did)return;
+ if(['failures','shortcut','counterfactual'].includes(state.view))
+  state.baselineReadiness=await api('/api/datasets/'+did+'/baseline-readiness');
  if(['dna','counterfactual'].includes(state.view)){
   const tasks=[api(`/api/datasets/${did}/samples?page=${state.samplePage}&size=24${state.sampleFilter||''}`)];
   if(state.view==='dna')tasks.push(api(`/api/datasets/${did}/dna`));
@@ -334,8 +355,15 @@ async function openFinding(id){try{const out=await api('/api/findings/'+id);cons
  }catch(e){toast(e.message,true)}}
 async function openSample(id){try{const d=await api('/api/samples/'+id),s=d.sample;openModal('Image record · '+s.sample_id,`<div class="comparison"><div class="image-panel"><img src="${esc(s.image_url)}" alt="Selected research image" style="height:300px"><p>${esc(s.sample_id)}</p></div><div><dl>${[['Label',s.label],['Split',s.split],['Group ID',s.group_id||'Not recorded'],['Group meaning',s.group_type||'Not documented'],['Source site',s.site||'Unknown'],['Dimensions',s.width+'×'+s.height],['SHA256',short(s.sha256)]].map(([k,v])=>`<div class="kv" style="grid-template-columns:100px 1fr"><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl></div></div><div class="rule"></div><h3>Linked forensic findings</h3>${(d.findings||[]).length?`<div class="findings-list" style="margin-top:13px">${d.findings.slice(0,8).map(findingRow).join('')}</div>`:'<p class="fine" style="margin-top:12px">No related audit evidence recorded.</p>'}`)}catch(e){toast(e.message,true)}}
 async function startAudit(){if(!state.did)return toast('Select a dataset first',true);try{const v=await api('/api/datasets/'+state.did+'/audit',{method:'POST'});toast('Forensic analysis queued. Watch Analysis Jobs.');openJobs();}catch(e){toast(e.message,true)}}
-async function launchExperiment(kind,config={}){if(!state.did)return toast('Select a dataset first',true);if(['shortcut','counterfactual','cross_dataset'].includes(kind)&&!bestExp('baseline')){toast('Train the CPU baseline first; open Model Failure Explorer.',true);return}try{const v=await api('/api/datasets/'+state.did+'/experiments',{method:'POST',body:JSON.stringify({kind,config})});toast(title(kind)+' experiment queued.');openJobs()}catch(e){toast(e.message,true)}}
-async function openJobs(){try{const rows=await api('/api/jobs');let html=`<p class="fine" style="margin-bottom:15px">Background CPU tasks continue while you explore the workbench. Refresh to check their status.</p><div class="data-list">${rows.length?rows.map(j=>`<div class="data-row"><div style="flex:1"><div class="row-label">${esc(title(j.kind))} ${pill(j.status,j.status==='completed'?'green':j.status==='failed'?'red':j.status==='running'?'amber':'')}</div><div class="row-desc">${esc(j.message)}</div>${j.status==='running'?`<div class="meter" style="margin-top:9px"><div class="meter-fill" style="width:${j.progress}%"></div></div>`:''}${j.error?`<p class="fine" style="color:var(--red);margin-top:7px">${esc(j.error)}</p>`:''}</div>${['queued','running'].includes(j.status)?`<button class="btn btn-small" data-cancel-job="${esc(j.id)}">Cancel</button>`:''}</div>`).join(''):empty('No background jobs','Run an audit or experiment to generate a task.')}</div><div class="actions">${btn(icon('rotate')+' Refresh jobs','jobs','btn-primary')}${btn('Refresh workspace','refresh','')}</div>`;openModal('Analysis jobs',html)}catch(e){toast(e.message,true)}}
+async function launchExperiment(kind,config={}){if(!state.did)return toast('Select a dataset first',true);
+ if(kind==='baseline'){
+  try{state.baselineReadiness=await api('/api/datasets/'+state.did+'/baseline-readiness');
+   if(!state.baselineReadiness.ready){toast('Baseline cannot start. See the dataset readiness report in Model Failure Explorer.',true);return navigate('failures');}
+  }catch(e){return toast(e.message,true)}
+ }
+ if(['shortcut','counterfactual','cross_dataset'].includes(kind)&&!bestExp('baseline')){toast('A completed baseline with a saved model is required. Open Model Failure Explorer.',true);return}
+ try{const v=await api('/api/datasets/'+state.did+'/experiments',{method:'POST',body:JSON.stringify({kind,config})});toast(title(kind)+' experiment queued.');openJobs()}catch(e){toast(e.message,true)}}
+async function openJobs(){try{const rows=await api('/api/jobs'+(state.did?'?dataset_id='+encodeURIComponent(state.did):''));let html=`<p class="fine" style="margin-bottom:15px">Background CPU tasks continue while you explore the workbench. Refresh to check their status.</p><div class="data-list">${rows.length?rows.map(j=>`<div class="data-row"><div style="flex:1"><div class="row-label">${esc(title(j.kind))} ${pill(j.status,j.status==='completed'?'green':j.status==='failed'?'red':j.status==='running'?'amber':'')}</div><div class="row-desc">${esc(j.message)}</div>${j.status==='running'?`<div class="meter" style="margin-top:9px"><div class="meter-fill" style="width:${j.progress}%"></div></div>`:''}${j.error?`<p class="fine" style="color:var(--red);margin-top:7px">${esc(j.error)}</p>`:''}</div>${['queued','running'].includes(j.status)?`<button class="btn btn-small" data-cancel-job="${esc(j.id)}">Cancel</button>`:''}</div>`).join(''):empty('No background jobs','Run an audit or experiment to generate a task.')}</div><div class="actions">${btn(icon('rotate')+' Refresh jobs','jobs','btn-primary')}${btn('Refresh workspace','refresh','')}</div>`;openModal('Analysis jobs',html)}catch(e){toast(e.message,true)}}
 async function openImport(){
  const html=`<p class="fine" style="margin-bottom:20px">Upload a licensed dataset to your computer. No cloud transfer. NPZ supports MedMNIST train/val/test arrays; ZIP requires a root-level samples.csv with sample_id, image_path, label and split columns.</p>
  <form id="importForm"><div id="importFields"><div class="field"><label for="fileUpload">Dataset file (.npz or .zip)</label><input class="input" id="fileUpload" type="file" accept=".npz,.zip" required></div>
@@ -422,7 +450,7 @@ $('#datasetSelect').addEventListener('change',e=>changeDataset(e.target.value));
 $('#menuToggle').addEventListener('click',()=>{$('#sidebar').classList.toggle('open');const opened=$('#sidebar').classList.contains('open');$('#mobileOverlay').hidden=!opened;$('#menuToggle').setAttribute('aria-expanded',String(opened))});
 $('#mobileOverlay').addEventListener('click',()=>{$('#sidebar').classList.remove('open');$('#mobileOverlay').hidden=true;$('#menuToggle').setAttribute('aria-expanded','false')});
 window.addEventListener('hashchange',()=>{const view=location.hash.replace('#/','');if(view&&view!==state.view){state.view=RENDER[view]?view:'overview';render()}});
-async function pollJobs(){try{const rows=await api('/api/jobs');const active=rows.filter(j=>j.status==='queued'||j.status==='running');$('#jobIndicator').hidden=!active.length;
+async function pollJobs(){try{const rows=await api('/api/jobs'+(state.did?'?dataset_id='+encodeURIComponent(state.did):''));const active=rows.filter(j=>j.status==='queued'||j.status==='running');$('#jobIndicator').hidden=!active.length;
  const terminal=rows.filter(j=>['completed','failed','cancelled'].includes(j.status)).map(j=>j.id+':'+j.status).join('|');
  if(pollJobs.last!==undefined&&pollJobs.last!==terminal){await loadCore();await render()}
  pollJobs.last=terminal;

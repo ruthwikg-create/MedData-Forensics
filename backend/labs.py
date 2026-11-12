@@ -21,14 +21,81 @@ def _load(db,dataset_id):
     return d,[s for s in rows if s.width and s.height]
 
 def _model(train,seed=42,max_train=2400):
-    train=train[:max_train]
-    if len(train)<20 or len(set(x.label for x in train))<2:raise ValueError('Requires >=20 training images and >=2 classes')
+    # A source archive may be ordered by class. A head-only cap silently drops
+    # minority classes, so reserve three per class before seeded subsampling.
     counts=Counter(x.label for x in train)
-    if min(counts.values())<3:raise ValueError('Insufficient samples per class')
-    x=np.vstack([extract_features(safe_path(s.relpath)) for s in train]);y=np.array([s.label for s in train]);
-    model=LogisticRegression(max_iter=350,class_weight='balanced',solver='liblinear',random_state=seed)
+    if len(train)<20 or len(counts)<2:raise ValueError('Requires at least 20 training images and two classes')
+    if min(counts.values())<3:raise ValueError('Each training class needs at least three valid images')
+    if len(train)>max_train:
+        buckets=defaultdict(list)
+        for item in train:buckets[item.label].append(item)
+        if 3*len(buckets)>max_train:raise ValueError('Too many classes for the CPU training cap')
+        rng=np.random.default_rng(seed)
+        reserved=[buckets[label][int(k)] for label in sorted(buckets)
+                  for k in rng.choice(len(buckets[label]),size=3,replace=False)]
+        reserved_ids={x.id for x in reserved}
+        rest=[x for x in train if x.id not in reserved_ids]
+        picked=[rest[int(k)] for k in rng.permutation(len(rest))[:max_train-len(reserved)]]
+        train=reserved+picked
+    x=np.vstack([extract_features(safe_path(s.relpath)) for s in train]);y=np.array([s.label for s in train])
+    # lbfgs supports binary and multiclass classification without the newer
+    # scikit-learn liblinear multiclass compatibility restriction.
+    model=LogisticRegression(max_iter=450,class_weight='balanced',solver='lbfgs',random_state=seed)
     model.fit(x,y)
     return model
+
+def baseline_readiness(db,dataset_id):
+    """Cheap, actionable checks before queueing CPU training.
+
+    This cannot replace the pixel/group leakage screen inside run_baseline.
+    The latter still fails closed when no independent held-out test remains.
+    """
+    dataset=db.get(Dataset,dataset_id)
+    if dataset is None:raise ValueError('Unknown dataset')
+    all_rows=db.scalars(select(Sample).where(Sample.dataset_id==dataset_id)).all()
+    rows=[s for s in all_rows if s.width and s.height]
+    splits=Counter(s.split for s in rows)
+    train=[s for s in rows if s.split=='train']
+    test=[s for s in rows if s.split=='test']
+    labels=Counter(s.label for s in train)
+    errors=[];warnings=[]
+    if len(train)<20:errors.append('At least 20 valid training images are required; currently '+str(len(train))+'.')
+    if len(labels)<2:errors.append('Training split needs at least two different labels.')
+    small={label:n for label,n in labels.items() if n<3}
+    if small:errors.append(str(len(small))+' training class(es) have fewer than three valid images.')
+    if len(labels)>800:errors.append('More training classes than the CPU training cap supports.')
+    if not test:errors.append('A separate held-out test split with valid images is required.')
+    invalid=len(all_rows)-len(rows)
+    if invalid:warnings.append(str(invalid)+' invalid or unsupported images will be excluded.')
+    missing=[]
+    for row in rows:
+        try:
+            if not safe_path(row.relpath).is_file():missing.append(row.sample_id)
+        except (OSError,ValueError):
+            missing.append(row.sample_id)
+        if len(missing)==3:break
+    if missing:errors.append('Image files are missing or unreadable (examples: '+', '.join(missing)+'). Restore the data/ folder.')
+    # Hash/group overlap is only an early warning. Decoded-pixel matches are
+    # screened during training and can still make a dataset ineligible.
+    prior={(s.sha256,'sha') for s in train if s.sha256}
+    prior.update((s.group_type or 'unspecified',s.group_id) for s in train if s.group_id)
+    overlaps=0
+    for sample in test:
+        identifiers=set()
+        if sample.sha256:identifiers.add((sample.sha256,'sha'))
+        if sample.group_id:identifiers.add((sample.group_type or 'unspecified',sample.group_id))
+        if identifiers & prior:overlaps+=1
+    if overlaps:
+        warnings.append(str(overlaps)+' test record(s) share a file hash or declared group with training and may be excluded.')
+    if test and overlaps==len(test):
+        errors.append('All test records overlap training hashes or groups; provide a genuinely independent held-out test split.')
+    if not all(s.group_id for s in rows):warnings.append('Missing group identifiers prevent verification of patient-level independence.')
+    if len(train)>2400:warnings.append('CPU training samples at most 2,400 images using a seeded class-aware selection.')
+    return {'ready':not errors,'errors':errors,'warnings':warnings,
+            'split_counts':dict(splits),'train_class_counts':dict(sorted(labels.items())),
+            'invalid_images':invalid,'overlap_test_records':overlaps,
+            'note':'A ready check is not clinical validation and does not guarantee training will succeed. The full leakage screen runs within the job.'}
+
 
 def _pred(model,samples):
     x=np.vstack([extract_features(safe_path(s.relpath)) for s in samples]);probs=model.predict_proba(x)
@@ -186,8 +253,12 @@ def run_shortcut(exp_id,progress=None):
     """Source-label association and occlusion sensitivity; neither establishes causation."""
     with Session() as db:
         e=db.get(Experiment,exp_id);d,samples=_load(db,e.dataset_id);base,model=_latest_model(db,d.id)
-        test=[s for s in samples if s.split=='test'][:160]
-        if not test:raise ValueError('Requires test images')
+        train=[s for s in samples if s.split=='train']
+        validation=[s for s in samples if s.split=='val']
+        test_all=[s for s in samples if s.split=='test']
+        if not test_all:raise ValueError('Requires test images')
+        _,screened_test,integrity=_evaluation_integrity(train,validation,test_all)
+        test=screened_test[:160]
         if progress:progress(20,'Testing control and region-masked images')
         def mask_features(s,kind):
             with Image.open(safe_path(s.relpath)) as im:
@@ -203,7 +274,8 @@ def run_shortcut(exp_id,progress=None):
         flip=int(np.sum(np.argmax(orig,axis=1)!=np.argmax(masked,axis=1)))
         conf_change=float(np.mean(np.abs(np.max(orig,axis=1)-np.max(masked,axis=1))))
         output={'baseline_experiment_id':base.id,'test_n':len(test),'region':'upper-left approximately 14% corner','prediction_flip_rate':flip/len(test),
-            'mean_max_confidence_change':conf_change,'distribution_shift_test':'controlled corner masking','caveat':'Image occlusion may change important image content; changes do not prove shortcut learning. Test confounds and controls before causal claims.',
+            'mean_max_confidence_change':conf_change,'distribution_shift_test':'controlled corner masking',
+            'evaluation_integrity':integrity,'caveat':'Image occlusion may change important image content; changes do not prove shortcut learning. Test confounds and controls before causal claims.',
             'manifest':_manifest(d,jl(e.config),42)}
         e.result=jd(output);e.status='completed';e.finished_at=now();db.commit()
         if progress:progress(100,'Shortcut probe complete')

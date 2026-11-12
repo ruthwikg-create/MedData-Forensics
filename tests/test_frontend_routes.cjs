@@ -117,3 +117,18 @@ test('access token panel explains that localhost does not require a token by def
  assert.ok(result.includes('TOKEN DISABLED (DEFAULT)'));
  assert.ok(result.includes('No access token is necessary'));
 });
+
+test('baseline failure explorer shows dataset-specific requirements and job error',()=>{
+ const rendered=vm.runInContext(`state.detail={dataset:{id:'ds1',name:'Test data'},experiments:[]};
+  state.jobs=[{kind:'baseline',status:'failed',error:'No independent test records remain'}];
+  state.baselineReadiness={ready:false,split_counts:{train:40,val:8,test:0},errors:['A separate held-out test split is required.'],warnings:[]};
+  renderFailures()`,ctx);
+ assert.ok(rendered.includes('Baseline dataset readiness'));
+ assert.ok(rendered.includes('A separate held-out test split is required.'));
+ assert.ok(rendered.includes('No independent test records remain'));
+});
+test('a completed baseline without its model artifact cannot unlock dependent labs',()=>{
+ const ready=vm.runInContext(`state.detail={dataset:{id:'ds1',name:'Test data'},experiments:[{id:'dead',kind:'baseline',status:'completed',artifact_available:false}]};
+  bestExp('baseline')`,ctx);
+ assert.equal(ready,undefined);
+});

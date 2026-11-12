@@ -236,7 +236,8 @@ def ranking_comparison(db,dataset_id,budget=15):
     """
     latest=db.scalar(select(AuditRun.id).where(AuditRun.dataset_id==dataset_id,AuditRun.status=='completed').order_by(AuditRun.created_at.desc()).limit(1))
     findings=db.scalars(select(Finding).where(Finding.audit_id==latest)).all() if latest else []
-    if not findings:return {'strategies':[],'message':'Run an audit first.'}
+    if not findings:return {'strategies':[],'audit_completed':bool(latest),
+        'message':'The completed audit found no candidate findings to rank.' if latest else 'Run a forensic audit first, then compare candidate findings.'}
     dataset=db.get(Dataset,dataset_id)
     truth=None
     if dataset.synthetic:
