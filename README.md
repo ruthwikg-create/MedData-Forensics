@@ -6,6 +6,14 @@
 
 MedData Forensics imports image classification datasets, identifies potential data-integrity risks with inspectable evidence, lets researchers review findings, and runs CPU-friendly comparative experiments. Every original dataset remains unchanged. No medical equipment, CUDA GPU, Docker or paid API required.
 
+## Distinct research workspaces without a dataset
+
+All ten research modules now display a **different, clearly labeled instructional workspace** before data is imported. Dataset DNA previews lineage structure; Forensic Audit explains its detector pipeline; Evidence Graph shows a conceptual network; Review Center explains its four decision states; Shortcut Inspector shows a synthetic region mask; Counterfactual Lab offers working synthetic brightness, blur and masking previews; Cross-Dataset Lab explains compatibility; Impact Simulator shows the frozen-test evaluation design; Model Failure Explorer explains the confusion matrix; and Reproducibility shows an illustrative experiment manifest. None of these previews are real audit findings or model predictions.
+
+Use **Create synthetic dataset** or **Import real research data** in any module to unlock actual dataset-backed analysis. Each module remains distinct after loading, with its own real results. See [Workspace guide](docs/WORKSPACE_GUIDE.md).
+
+**After updating from GitHub:** stop the running server, execute `git pull origin main` in your cloned repository, restart `RUN_ME_WINDOWS.bat`, and force-refresh Chrome with `Ctrl+Shift+R`. The application is not updated by pulling from a ZIP-extracted folder.
+
 ## Quick start: Windows 11
 
 Prerequisite: **Python 3.11+** (your Python 3.11.9 is suitable), internet access once to install free packages, and sufficient storage. The first sandbox uses newly generated shapes (not clinical images).
