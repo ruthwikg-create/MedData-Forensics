@@ -189,3 +189,17 @@
 @media(max-width:800px){.ranking-grid{grid-template-columns:1fr}.graph-finding-index{grid-template-columns:1fr}}
 @media(max-width:550px){.counter-stage{grid-template-columns:1fr}.node-graph svg{min-width:610px}}
 @media(prefers-reduced-motion:reduce){.ranking-candidate,.graph-list-item{transition:none}}
+
+
+/* Evidence graph: preserve legible node cards and accessible horizontal exploration. */
+.node-graph{height:auto;min-height:300px;max-height:570px;overflow:auto;overscroll-behavior:contain;touch-action:pan-x pan-y}
+.node-graph svg{display:block;width:950px;max-width:none;min-width:950px;height:auto;min-height:0}
+.node-graph:focus-visible{outline:3px solid var(--teal);outline-offset:3px}
+.node-graph .graph-card-bg{fill:var(--paper);stroke:var(--border-strong);stroke-width:1.5}
+.node-graph .graph-card:focus-visible .graph-card-bg{stroke:var(--teal);stroke-width:3}
+.graph-scroll-hint{color:var(--muted);font-size:12px;margin:0 0 8px}
+.graph-empty-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:22px}
+.graph-empty-grid h4{margin-bottom:10px;font-size:13px}
+.graph-empty-grid .graph-list-item{width:100%;text-align:left;white-space:normal}
+.graph-empty-note{padding:20px}
+@media(max-width:700px){.graph-empty-grid{grid-template-columns:1fr}.graph-scroll-hint{font-size:11px}}
