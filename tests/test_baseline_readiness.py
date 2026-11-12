@@ -91,3 +91,18 @@ def test_worker_requeues_recently_interrupted_jobs_without_waiting_ten_minutes()
         db.delete(job)
         db.delete(experiment)
         db.commit()
+
+
+def test_empty_completed_audit_explains_why_comparison_has_no_candidates():
+    from backend.db import AuditRun
+    with TestClient(app) as client:
+        did=client.post('/api/datasets/demo',json={'count':40,'seed':325}).json()['dataset_id']
+        before=client.get(f'/api/datasets/{did}/rankings').json()
+        assert before['audit_completed'] is False
+        with Session() as db:
+            db.add(AuditRun(dataset_id=did,status='completed'))
+            db.commit()
+        after=client.get(f'/api/datasets/{did}/rankings').json()
+        assert after['audit_completed'] is True
+        assert after['strategies']==[]
+        assert 'no candidate findings' in after['message'].lower()
