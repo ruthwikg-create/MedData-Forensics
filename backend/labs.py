@@ -88,7 +88,7 @@ def baseline_readiness(db,dataset_id):
     if overlaps:
         warnings.append(str(overlaps)+' test record(s) share a file hash or declared group with training and may be excluded.')
     if test and overlaps==len(test):
-        errors.append('All test records match training file hashes or groups; provide a genuinely held-out test split.')
+        errors.append('All test records overlap training hashes or groups; provide a genuinely independent held-out test split.')
     if not all(s.group_id for s in rows):warnings.append('Missing group identifiers prevent verification of patient-level independence.')
     if len(train)>2400:warnings.append('CPU training samples at most 2,400 images using a seeded class-aware selection.')
     return {'ready':not errors,'errors':errors,'warnings':warnings,
