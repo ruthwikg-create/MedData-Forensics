@@ -95,7 +95,9 @@ test('real-data ranking compare displays candidate order without inventing verif
 });
 test('evidence graph renders an explicit sample inventory when no audit has completed',()=>{
  const result=vm.runInContext(`state.detail={dataset:{id:'demo',name:'Research set'}};state.graph={audit_completed:false,network_mode:'sample_inventory',finding_count:0,nodes:[{id:'s:s1',label:'image-1',type:'sample',split:'train'}],edges:[],note:'No completed audit.'};renderGraph()`,ctx);
- assert.ok(result.includes('id="nodeGraph"'));
+ assert.ok(!result.includes('id="nodeGraph"'),'no disconnected line-only SVG should be shown');
+ assert.ok(result.includes('No detector-linked image relationships'));
+ assert.ok(result.includes('data-sample="s1"'));
  assert.ok(result.includes('No completed audit'));
  assert.ok(result.includes('data-action="run-audit"'));
 });
@@ -116,4 +118,27 @@ test('access token panel explains that localhost does not require a token by def
  const result=vm.runInContext(`state.privacy={token_required:false};renderPrivacy()`,ctx);
  assert.ok(result.includes('TOKEN DISABLED (DEFAULT)'));
  assert.ok(result.includes('No access token is necessary'));
+});
+
+test('evidence graph displays linked findings as accessible, scrollable node cards',()=>{
+ const html=vm.runInContext("state.detail={dataset:{id:'demo',name:'Research set'}};state.graph={audit_completed:true,network_mode:'evidence',finding_count:1,nodes:[{id:'s:s1',label:'image-1',type:'sample',split:'train'},{id:'f:f1',label:'split leakage',type:'finding',status:'suspected'}],edges:[{source:'f:f1',target:'s:s1'}],note:'Detector evidence only'};renderGraph()",ctx);
+ assert.ok(html.includes('id="nodeGraph"'));
+ assert.ok(html.includes('scroll to explore nodes'));
+ assert.ok(html.includes('1 detector-evidence links'));
+ const box={innerHTML:'',querySelectorAll:()=>[]};
+ ctx.document.querySelector=s=>s==='#nodeGraph'?box:null;
+ vm.runInContext("drawGraph(state.graph)",ctx);
+ assert.ok(box.innerHTML.includes('<svg'));
+ assert.ok(box.innerHTML.includes('width="950"'));
+ assert.ok(box.innerHTML.includes('Detector-linked findings'));
+ assert.ok(box.innerHTML.includes('data-node="s:s1"'));
+ assert.ok(box.innerHTML.includes('data-node="f:f1"'));
+ assert.ok(box.innerHTML.includes('stroke-opacity=".8"'));
+ delete ctx.document.querySelector;
+});
+test('dataset-wide findings without image evidence show a list, not invented edges',()=>{
+ const html=vm.runInContext("state.detail={dataset:{id:'demo',name:'Research set'}};state.graph={audit_completed:true,network_mode:'evidence',finding_count:1,nodes:[{id:'f:f1',type:'finding',label:'source association',status:'suspected'}],edges:[],note:'Dataset-wide association only'};renderGraph()",ctx);
+ assert.ok(!html.includes('id="nodeGraph"'));
+ assert.ok(html.includes('data-finding="f1"'));
+ assert.ok(html.includes('No detector-linked image relationships'));
 });
