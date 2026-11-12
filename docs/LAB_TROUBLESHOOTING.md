@@ -8,6 +8,18 @@ All application experiments are software-only and research-only. They do not cer
 2. Upload progress is based on bytes transferred to localhost. The **indexing stage is indeterminate** because the server does not send per-image processing updates. The successful import result appears only after an API response confirms indexing is finished.
 3. Visit **Dataset DNA** to check train/validation/test counts, known group IDs and provenance.
 
+
+## Baseline training fails
+
+1. Open **Model Failure Explorer**. The **Baseline dataset readiness** panel checks valid training classes, minimum sample counts, held-out test split, missing images, and recorded hash/group overlap. It is specific to the currently selected dataset.
+2. Correct every item under **Required fixes** before retrying. For a real imported collection, use a valid train/test partition from its source documentation. Do not mix a patient's images between training and held-out evaluation to force a run.
+3. Press **Train baseline** only after readiness checks pass. The worker performs a stricter decoded-pixel and group leakage screen during the job; the readiness panel intentionally does not claim that every case can be detected in advance.
+4. If a job still fails, inspect the exact error displayed in **Model Failure Explorer** or in **Analysis Jobs**. Save the job kind, dataset name, and error message for troubleshooting; do not send patient images or credentials.
+5. A completed job alone is not sufficient if its model artifact has been lost. Dependent labs now check that the saved baseline file exists. Restore the artifact directory or train the model again.
+6. If buttons behave as before despite a code update, stop the server, pull the latest branch, restart, and hard-refresh the browser. Changes to a downloaded ZIP are not updated by `git pull`.
+
+Automated Linux and Windows workflow tests validate synthetic/software behavior, not local machine compatibility with every dataset or independent clinical correctness.
+
 ## Ranking Compare
 
 1. Open **Forensic Audit**, choose **Run audit**, then open **Analysis Jobs** to confirm it completed.
