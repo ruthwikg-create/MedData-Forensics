@@ -29,7 +29,7 @@ async def lifespan(app):
     yield
     stop.set()
     if thread:thread.join(timeout=3)
-app=FastAPI(title='MedData Forensics',version='0.9.0-research',lifespan=lifespan,docs_url='/api/docs',openapi_url='/api/openapi.json')
+app=FastAPI(title='MedData Forensics',version='0.9.2-research',lifespan=lifespan,docs_url='/api/docs',openapi_url='/api/openapi.json')
 
 @app.middleware('http')
 async def security_middleware(request,call_next):
@@ -376,6 +376,7 @@ def privacy():
     return {'processing':'local only','outbound_api_calls':False,'telemetry':False,'public_data_hosting':False,
       'storage':'data/ and artifacts/ outside frontend web root','database':'local SQLite default; PostgreSQL optional',
       'uploads':'150 MB archives maximum; extension, size, archive traversal checks','authentication':'optional MDF_ACCESS_TOKEN; bind to 127.0.0.1 unless configured',
+      'token_required':bool(os.getenv('MDF_ACCESS_TOKEN','')),
       'clinical_data_policy':'Use only authorized, de-identified or synthetic research data. No clinical care.'}
 
 STATIC=Path(__file__).resolve().parents[1]/'frontend'/'static'

@@ -205,18 +205,27 @@ def audit(dataset_id,run_id,progress=None):
         return jl(run.summary)
 
 
-def forensic_graph(db,dataset_id,limit=100):
+def forensic_graph(db, dataset_id, limit=100):
+    """Report only evidenced links; when none exist, show isolated real sample nodes."""
     latest=db.scalar(select(AuditRun.id).where(AuditRun.dataset_id==dataset_id,AuditRun.status=='completed').order_by(AuditRun.created_at.desc()).limit(1))
     findings=db.scalars(select(Finding).where(Finding.audit_id==latest).order_by(Finding.priority.desc()).limit(limit)).all() if latest else []
-    selected_ids={v for f in findings for v in [f.sample_id,f.linked_id] if v}
-    samples=db.scalars(select(Sample).where(Sample.id.in_(selected_ids))).all() if selected_ids else []
-    nodes=[{'id':'s:'+s.id,'label':s.sample_id,'type':'sample','split':s.split,'group':s.group_id} for s in samples]
-    links=[]
+    if findings:
+        selected_ids={v for f in findings for v in (f.sample_id,f.linked_id) if v}
+        samples=db.scalars(select(Sample).where(Sample.id.in_(selected_ids))).all() if selected_ids else []
+    else:
+        # An isolated sample is a genuine dataset record, never a fabricated forensic relationship.
+        samples=db.scalars(select(Sample).where(Sample.dataset_id==dataset_id).order_by(Sample.sample_id).limit(12)).all()
+    nodes=[{'id':'s:'+x.id,'label':x.sample_id,'type':'sample','split':x.split,'group':x.group_id} for x in samples]
+    edges=[]
     for f in findings:
-        nodes.append({'id':'f:'+f.id,'label':f.kind.replace('_',' '),'type':'finding','status':f.status,'severity':f.severity})
-        if f.sample_id:links.append({'source':'f:'+f.id,'target':'s:'+f.sample_id})
-        if f.linked_id:links.append({'source':'f:'+f.id,'target':'s:'+f.linked_id})
-    return {'nodes':nodes,'edges':links,'truncated':len(findings)>=limit,'note':'Connections indicate reported forensic evidence, not verified patient identity.'}
+        nodes.append({'id':'f:'+f.id,'label':f.kind.replace('_',' '),'type':'finding','status':f.status,'severity':f.severity,'priority':f.priority})
+        for sid in (f.sample_id,f.linked_id):
+            if sid:edges.append({'source':'f:'+f.id,'target':'s:'+sid})
+    return {'nodes':nodes,'edges':edges,'audit_completed':latest is not None,'finding_count':len(findings),
+            'network_mode':'evidence' if findings else 'sample_inventory', 'truncated':len(findings)>=limit,
+            'note':('No completed audit. Isolated sample nodes are shown without invented connections.' if not latest else
+                    'No linked findings were detected in the completed audit.' if not findings else
+                    'Connections indicate detector evidence, not verified patient identity.')}
 
 
 def ranking_comparison(db,dataset_id,budget=15):
@@ -259,19 +268,27 @@ def ranking_comparison(db,dataset_id,budget=15):
       'Severity':sorted(findings,key=lambda f:(-SEVERITY[f.severity],stable(f))),
     }
     strategies=[]
+    igat_top={f.id for f in ranked['IGAT (experimental)'][:n]}
+    def preview(order):
+        return [{'id':f.id, 'title':f.title,'kind':f.kind,
+                 'sample_id':sample_ids.get(f.sample_id,''),'priority':round(float(f.priority),4),
+                 'confidence':round(float(f.confidence),4),'severity':f.severity} for f in order[:min(n,5)]]
     for name,order in ranked.items():
         total=sum(correct(f) for f in order[:n]) if truth is not None else None
         strategies.append({'name':name,'review_budget':n,'confirmed_known_defects':total,
                            'precision_at_budget':total/n if total is not None else None,
-                           'total_candidates':len(findings),'ranking_ids':[f.id for f in order[:n]]})
+                           'total_candidates':len(findings),'top_candidates':preview(order),
+                           'overlap_with_igat':len(igat_top&{f.id for f in order[:n]}),
+                           'ranking_ids':[f.id for f in order[:n]]})
     trials=[sum(correct(f) for f in random_order(seed)[:n]) for seed in range(42,72)] if truth is not None else []
     rand=random_order(42)
     strategies.append({'name':'Random (30 seeded trials)','review_budget':n,
         'confirmed_known_defects':float(np.mean(trials)) if trials else None,
         'precision_at_budget':float(np.mean(trials))/n if trials else None,
+        'top_candidates':preview(rand), 'overlap_with_igat':len(igat_top&{f.id for f in rand[:n]}),
         'trial_yield_95pct_interval':[float(np.quantile(trials,.025)),float(np.quantile(trials,.975))] if trials else None,
         'trial_seeds':list(range(42,72)), 'total_candidates':len(findings),'ranking_ids':[f.id for f in rand[:n]]})
-    return {'strategies':strategies,'ground_truth_available':truth is not None,
+    return {'strategies':strategies,'ground_truth_available':truth is not None,'candidate_count':len(findings),'review_budget':n,
             'method':'All strategies rank identical candidates and use an equal number of reviews. Random baseline averages 30 fixed seeds.',
             'caveat':('Only known, deliberately injected synthetic defects can be scored here; this is not an independent biomedical-label benchmark or an estimate of clinical usefulness.'
                  if truth else 'Cannot compute fair issue yield without independently established reference truth for this dataset. Reviewer-accepted hypotheses are not automatically unbiased ground truth.')}

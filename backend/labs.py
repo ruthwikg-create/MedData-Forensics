@@ -12,7 +12,7 @@ from .db import Session,Dataset,Sample,Finding,Review,Experiment,ARTIFACT_ROOT,D
 from .analysis_engine import extract_features,DETECTOR_VERSION
 from .security import safe_path,sha_file,manifest_hash
 
-LAB_VERSION='labs-0.9.0'
+LAB_VERSION='labs-0.9.2'
 
 def _load(db,dataset_id):
     d=db.get(Dataset,dataset_id)
@@ -209,27 +209,35 @@ def run_shortcut(exp_id,progress=None):
         if progress:progress(100,'Shortcut probe complete')
         return output
 
-def _transform(im,kind):
+def _transform(im,kind,strength=0.4):
+    """Controlled transformations; strength in [0,1]. Same setting recorded in manifest."""
+    from PIL import ImageDraw
+    strength=float(strength)
+    if not np.isfinite(strength) or not (0<=strength<=1):raise ValueError('Strength must be in [0, 1]')
     im=im.convert('RGB')
-    if kind=='brightness_up':return ImageEnhance.Brightness(im).enhance(1.25)
-    if kind=='brightness_down':return ImageEnhance.Brightness(im).enhance(.75)
-    if kind=='blur':return im.filter(ImageFilter.GaussianBlur(radius=1.35))
+    if kind=='brightness_up':return ImageEnhance.Brightness(im).enhance(1+0.625*strength)
+    if kind=='brightness_down':return ImageEnhance.Brightness(im).enhance(max(0.1,1-0.625*strength))
+    if kind=='blur':return im.filter(ImageFilter.GaussianBlur(radius=3.375*strength))
     if kind=='corner_mask':
-        from PIL import ImageDraw
-        out=im.copy();ImageDraw.Draw(out).rectangle((0,0,max(12,int(out.width*.14)),max(12,int(out.height*.14))),fill=(85,85,85));return out
+        out=im.copy()
+        w=max(1,int(out.width*(0.03+0.35*strength)));h=max(1,int(out.height*(0.03+0.35*strength)))
+        if strength>0:ImageDraw.Draw(out).rectangle((0,0,w,h),fill=(85,85,85))
+        return out
     raise ValueError('Unrecognized transform')
 
 def run_counterfactual(exp_id,progress=None):
     with Session() as db:
         e=db.get(Experiment,exp_id);d,samples=_load(db,e.dataset_id);cfg=jl(e.config)
-        requested=cfg.get('sample_id');s=next((s for s in samples if s.id==requested or s.sample_id==requested),None)
+        requested=cfg.get('sample_id');strength=float(cfg.get('strength',0.4));
+        if not np.isfinite(strength) or not (0 <= strength <= 1):raise ValueError('Strength must be between 0 and 1')
+        s=next((s for s in samples if s.id==requested or s.sample_id==requested),None)
         if not s:raise ValueError('Select a sample to test')
         base,model=_latest_model(db,d.id)
         orig=_pred(model,[s])[0];labels=model.classes_.tolist();variants=[]
         dest=ARTIFACT_ROOT/e.id/'variants';dest.mkdir(parents=True,exist_ok=True)
         for i,kind in enumerate(['brightness_up','brightness_down','blur','corner_mask']):
             if progress:progress(15+int(i*19),f'Running {kind}')
-            with Image.open(safe_path(s.relpath)) as im:mod=_transform(im,kind)
+            with Image.open(safe_path(s.relpath)) as im:mod=_transform(im,kind,strength)
             path=dest/f'{kind}.png';mod.save(path)
             p=model.predict_proba(np.vstack([extract_features(path)]))[0]
             variants.append({'name':kind,'predicted':labels[int(np.argmax(p))],'confidence':float(np.max(p)),
@@ -237,6 +245,7 @@ def run_counterfactual(exp_id,progress=None):
                 'image_path':f'{e.id}/variants/{kind}.png'})
         out={'sample_id':s.id,'recorded_label':s.label,'baseline_experiment_id':base.id,
           'original_prediction':labels[int(np.argmax(orig))],'original_confidence':float(np.max(orig)),
+          'strength':strength,'transform_policy':'Four predefined transforms at recorded strength',
           'variants':variants,'caveat':'Controlled transforms reveal output sensitivity, not medical diagnosis or counterfactual causality.',
           'manifest':_manifest(d,cfg,42)}
         e.result=jd(out);e.status='completed';e.finished_at=now();db.commit()

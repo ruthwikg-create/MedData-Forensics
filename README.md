@@ -4,10 +4,22 @@
 
 > **RESEARCH ONLY.** This software does not diagnose patients, establish image-label truth, certify a medical device, validate a model for clinical use, or establish a dataset's clinical suitability. All new/demo test results refer only to synthetic geometric phantoms unless a dataset is explicitly identified as an independently sourced research dataset. No real-world model validation or accepted research-paper contribution is claimed.
 
-**Current release: v0.9.0 research acceptance hardening.**
+**Current release: v0.9.2 interactive research labs and import feedback.**
 
 MedData Forensics imports image classification datasets, identifies potential data-integrity risks with inspectable evidence, lets researchers review findings, and runs CPU-friendly comparative experiments. Every original dataset remains unchanged. No medical equipment, CUDA GPU, Docker or paid API required.
 
+
+
+## What changed in v0.9.2
+
+- **Import:** real transfer percentage is shown while the `.npz`/`.zip` file uploads; decoding and indexing display an explicitly indeterminate state, followed by a persistent success or error message. This does not provide a fictitious CPU indexing percentage.
+- **Experimental Review Ranking:** the Compare control changes the review budget and displays the top ranked **actual finding records** for IGAT, confidence, severity and the seeded random baseline. On externally sourced research data without independent defect truth, the software compares **review order only**, not detection precision. Synthetic planted defects can be scored separately.
+- **Evidence Graph:** real, selectable image and finding nodes, with a finding index and clearly labelled sample-only inventory before the first audit. No unsupported edges are generated. Run a forensic audit first to obtain evidence connections.
+- **Shortcut Inspector:** train the baseline in Model Failure Explorer first. The app now exposes this prerequisite instead of starting an experiment guaranteed to fail. The real probe uses a frozen model on imported test images and reports sensitivity, not causal proof of a shortcut.
+- **Counterfactual Lab:** image selector, real local image preview, brightness/blur/corner mask visual controls, and an experiment strength slider. The CPU experiment applies four recorded, controlled transforms to the selected image and preserves the strength in the result. **A visual preview is not a model output.**
+- **Privacy and Integrity:** the access-token panel now explains whether `MDF_ACCESS_TOKEN` is actually enabled. By default no token is needed on loopback. Never expose the workstation as a public service.
+
+For a step-by-step workflow and interpretation limits, see [Lab troubleshooting](docs/LAB_TROUBLESHOOTING.md).
 
 ## Distinct research workspaces without a dataset
 
@@ -16,6 +28,12 @@ All ten research modules now display a **different, clearly labeled instructiona
 Use **Create synthetic dataset** or **Import real research data** in any module to unlock actual dataset-backed analysis. Each module remains distinct after loading, with its own real results. See [Workspace guide](docs/WORKSPACE_GUIDE.md).
 
 **After updating from GitHub:** stop the running server, execute `git pull origin main` in your cloned repository, restart `RUN_ME_WINDOWS.bat`, and force-refresh Chrome with `Ctrl+Shift+R`. The application is not updated by pulling from a ZIP-extracted folder.
+
+## Dataset import feedback (v0.9.1)
+
+The **Add dataset** dialog now shows the real uploaded-byte percentage, followed by an indeterminate **Validating and indexing** phase. No invented indexing percentage or completion time is shown; large image imports may take time on CPU. On successful server confirmation, the dialog shows **Dataset imported successfully** and a **View Dataset DNA** action. The app updates its active dataset and retains the success message until you open the workspace. Failures remain visible with the returned validation error and a retry button. Repeat uploads are blocked while processing, and the dialog cannot be dismissed accidentally during an active import.
+
+**Important:** The local API currently handles dataset indexing synchronously. Its browser progress meter measures file transfer only; after transfer completes, the phase indicator remains active until the API responds. The maximum compressed upload size is 150 MiB. The original PathMNIST 196 MB NPZ must be reduced to a subset before importing. Do not assume the import succeeded until the success state appears in the modal and the dataset is visible in Dataset DNA.
 
 ## Quick start: Windows 11
 

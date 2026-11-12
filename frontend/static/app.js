@@ -43,8 +43,29 @@ async function api(path,opt={}){
   return type.includes('json')?res.json():res.text();
 }
 function toast(message,error=false){const el=document.createElement('div');el.className='toast'+(error?' error':'');el.innerHTML=icon(error?'alert':'check')+' <span>'+esc(message)+'</span>';$('#toastStack').append(el);setTimeout(()=>el.remove(),6000);}
-function openModal(name,body){lastFocused=document.activeElement;$('#modalTitle').textContent=name;$('#modalBody').innerHTML=body;$('#modalBackdrop').hidden=false;$('#modalClose').focus();document.body.style.overflow='hidden';}
-function closeModal(){if($('#modalBackdrop').hidden)return;$('#modalBackdrop').hidden=true;document.body.style.overflow='';if(lastFocused&&lastFocused.focus)lastFocused.focus();}
+let datasetImportInProgress=false;
+function openModal(name,body){if(datasetImportInProgress)return;lastFocused=document.activeElement;$('#modalTitle').textContent=name;$('#modalBody').innerHTML=body;$('#modalBackdrop').hidden=false;$('#modalClose').focus();document.body.style.overflow='hidden';}
+function closeModal(){if(datasetImportInProgress||$('#modalBackdrop').hidden)return;$('#modalBackdrop').hidden=true;document.body.style.overflow='';if(lastFocused&&lastFocused.focus)lastFocused.focus();}
+/** Real transfer progress; server-side indexing deliberately uses an indeterminate state. */
+function uploadResearchDataset(formData,onProgress,onPhase){return new Promise((resolve,reject)=>{
+ const xhr=new XMLHttpRequest();
+ xhr.open('POST','/api/datasets/import',true);
+ xhr.timeout=0; // CPU indexing is synchronous on the server; do not guess an ETA.
+ const token=storage.get('sessionStorage','mdf-token');if(token)xhr.setRequestHeader('X-MDF-Token',token);
+ xhr.setRequestHeader('Cache-Control','no-store');
+ xhr.upload.addEventListener('progress',e=>{if(e.lengthComputable&&e.total>0)onProgress(Math.min(100,Math.round(100*e.loaded/e.total)));});
+ xhr.upload.addEventListener('load',()=>onPhase('indexing'));
+ xhr.addEventListener('load',()=>{
+  let body={};try{body=JSON.parse(xhr.responseText||'{}')}catch{}
+  if(xhr.status>=200&&xhr.status<300&&body.dataset_id){resolve(body);return;}
+  let msg=body.detail||`Import failed (HTTP ${xhr.status}).`;
+  reject(Error(typeof msg==='string'?msg:JSON.stringify(msg)));
+ });
+ xhr.addEventListener('error',()=>reject(Error('Connection interrupted. Check that the local server is running; confirm whether the dataset was imported before retrying.')));
+ xhr.addEventListener('abort',()=>reject(Error('The upload was interrupted. Verify the dataset list before retrying.')));
+ xhr.send(formData);
+});}
+
 function empty(name,desc,action=''){return `<div class="empty-state"><div class="empty-icon">${icon('database')}</div><h3>${esc(name)}</h3><p>${esc(desc)}</p>${action}</div>`;}
 function pill(text,type=''){return `<span class="pill ${type}">${esc(text)}</span>`;}
 function head(eyebrow,name,description,actions=''){return `<header class="page-head"><div><div class="eyebrow">${esc(eyebrow)}</div><h1>${esc(name)}</h1><p class="subtitle">${esc(description)}</p></div><div class="page-actions">${actions}</div></header>`;}
@@ -99,8 +120,8 @@ function needDataset(){
 function updateCounterfactualPreview(){
  const target=$('#counterfactualPreview'),mode=$('#counterfactualMode'),slider=$('#counterfactualAmount');if(!target||!mode||!slider)return;
  const amount=Math.min(100,Math.max(0,Number(slider.value)||0)),m=mode.value;
- target.style.filter=m==='brightness'?`brightness(${(0.55+amount*.014).toFixed(2)})`:m==='blur'?`blur(${(amount*.055).toFixed(2)}px)`:'none';
- const mask=$('#counterfactualMask');if(mask){mask.hidden=m!=='mask';mask.style.width=`${Math.round(amount*.55)}%`;mask.style.height=`${Math.round(amount*.55)}%`;}
+ const image=target.querySelector('img')||target;image.style.filter=m==='brightness'?`brightness(${(1+amount*.00625).toFixed(2)})`:m==='blur'?`blur(${(amount*.034).toFixed(2)}px)`:'none';
+ const mask=$('#counterfactualMask');if(mask){mask.hidden=m!=='mask';mask.style.width=`${Math.round(3+amount*.35)}%`;mask.style.height=`${Math.round(3+amount*.35)}%`;}
  const readout=$('#counterfactualReadout');if(readout)readout.textContent=amount+'%';
 }
 function renderOverview(){const o=state.overview||{};const d=state.detail?.dataset;
@@ -132,11 +153,26 @@ function renderAudit(){const d=state.detail?.dataset;const findings=state.findin
  if(!audit)return html+empty('No completed forensic audit','Run the detector suite to identify exact duplicates, split/group overlap, near-duplicates, label suspicion and source associations.',btn('Run audit now','run-audit','btn-primary'));
  const data=audit.summary||{};
  html+=`<div class="stats-row">${stat('Candidate findings',number(data.total_findings),'All detector families')}${stat('Validated records',number(data.valid_samples),'Safe decoded images')}${stat('Label review set',number(data.label_analysis?.evaluated),'Training-only cross fit')}${stat('Near pairs tested',number(data.near_duplicate_search?.candidates_tested),'Bounded approximation')}</div>`;
- html+=`<div class="two-col equal">${card('Finding categories',bars(data.by_kind))}${card('Experimental review ranking',`<p class="fine" style="margin-bottom:12px">Compare review strategies at a fixed budget. Only known injected defects can be scored.</p><div class="filter-row"><label for="rankingBudget" class="fine">Review budget</label><select class="select" id="rankingBudget">${[3,4,6,10,15].map(n=>`<option value="${n}" ${Number(state.rankingBudget||4)===n?'selected':''}>${n} cases</option>`).join('')}</select></div><div id="rankingResult">${renderRankings()}</div>`,btn('Compare','rankings','btn-small'))}</div>`;
+ html+=`${card('Finding categories',bars(data.by_kind))}<div class="section-gap">${card('Experimental review ranking',`<p class="fine" style="margin-bottom:12px">Compare review strategies at a fixed budget. Only known injected defects can be scored.</p><div class="filter-row"><label for="rankingBudget" class="fine">Review budget</label><select class="select" id="rankingBudget">${[3,4,6,10,15].map(n=>`<option value="${n}" ${Number(state.rankingBudget||4)===n?'selected':''}>${n} cases</option>`).join('')}</select></div><div id="rankingResult">${renderRankings()}</div>`,btn('Compare','rankings','btn-small'))}</div>`;
  html+=`<section class="section-gap"><div class="card-title"><h3>Forensic evidence queue</h3><span class="fine">Select an item to inspect sources and record a review</span></div><div class="filter-row"><select class="select" id="findingKind"><option value="">All detector types</option>${['split_leakage','group_overlap','exact_duplicate','pixel_duplicate','near_duplicate','label_suspicion','source_association','integrity'].map(x=>`<option value="${x}" ${state.activeFilters.kind===x?'selected':''}>${title(x)}</option>`).join('')}</select><select class="select" id="findingStatus"><option value="">All statuses</option>${['suspected','confirmed','rejected','uncertain'].map(x=>`<option ${state.activeFilters.status===x?'selected':''}>${x}</option>`).join('')}</select><button class="btn btn-small" data-action="filter-findings">Apply filters</button><a class="btn btn-small" href="/api/datasets/${esc(d.id)}/report?format=csv">${icon('download')} Export CSV</a></div><div class="findings-list">${findings?.items?.length?findings.items.map(findingRow).join(''):empty('No findings for this filter','Try selecting a different detector type or review status.')}</div>${pager(findings?.count||0,state.findingPage||1,50,'finding')}</section>`;
  return html;
 }
-function renderRankings(){const rows=state.rankings?.strategies||[];return rows.length?`<div class="data-list">${rows.map(r=>`<div class="data-row"><div class="row-label">${esc(r.name)}</div><div class="right">${r.confirmed_known_defects==null?pill('No verified truth'):pill(r.confirmed_known_defects+' known defects','green')}</div></div>`).join('')}</div><p class="tiny" style="margin-top:13px">Budget: ${rows[0].review_budget} reviews. ${esc(state.rankings.caveat)}</p>`:'<p class="fine">No comparison available. Audit a dataset first.</p>';}
+function renderRankings(){
+ const payload=state.rankings||{},rows=payload.strategies||[];
+ if(!rows.length)return notice(payload.message||'Run a completed forensic audit before comparing the candidate queues.','warn');
+ const scored=payload.ground_truth_available;
+ const budget=Number(payload.review_budget||rows[0].review_budget);
+ const cards=rows.map(r=>{
+  const summary=scored?`<strong>${number(r.confirmed_known_defects)} known injected defects</strong><span class="fine"> in ${budget} reviews · experimental synthetic reference</span>`:
+    `<strong>${number(r.overlap_with_igat)}/${budget} overlap with IGAT</strong><span class="fine"> · ranking agreement only, not defect detection accuracy</span>`;
+  const items=(r.top_candidates||[]).map((item,i)=>`<button class="ranking-candidate" data-finding="${esc(item.id)}" title="Inspect detector evidence"><span class="ranking-index">${i+1}</span><span><strong>${esc(item.title)}</strong><small>${esc(item.kind.replaceAll('_',' '))} · sample ${esc(item.sample_id||'dataset-wide')} · priority ${(Number(item.priority)*100).toFixed(0)}%</small></span>${icon('arrow')}</button>`).join('');
+  return `<section class="ranking-strategy"><div class="ranking-title"><h4>${esc(r.name)}</h4>${scored?pill('Reference-scored','green'):pill('Order only','blue')}</div><div class="ranking-summary">${summary}</div><div class="ranking-candidates">${items}</div></section>`;
+ }).join('');
+ const guidance=scored?'The reference truth is from deliberately injected synthetic defects, NOT independently confirmed medical image labels.':
+   'This is a real comparison of which findings each ranking would review first. No validated defect yield or superiority claim is possible without independent reference labels.';
+ return `<div class="ranking-comparison" data-ranking-budget="${budget}"><div class="ranking-result-head"><strong>${number(payload.candidate_count||0)} candidate findings · review budget ${budget}</strong>${pill(scored?'Known synthetic truth':'No verified reference truth',scored?'green':'amber')}</div><p class="fine ranking-guidance">${esc(guidance)}</p><div class="ranking-grid">${cards}</div><p class="tiny" style="margin-top:12px">${esc(payload.method||'')} ${esc(payload.caveat||'')}</p></div>`;
+}
+
 function renderReview(){const d=state.detail?.dataset;const items=state.findings?.items||[];
  let html=head('HUMAN-IN-THE-LOOP','Review Center','Resolve suspected issues without overwriting image labels or destroying audit history.',d?btn('Open all audit evidence','go-audit'):'');
  if(!d)return html+needDataset();
@@ -147,34 +183,60 @@ function renderReview(){const d=state.detail?.dataset;const items=state.findings
  return html;
 }
 function CounterStatus(items){const a={suspected:0,confirmed:0,uncertain:0,rejected:0};items.forEach(f=>a[f.status]=(a[f.status]||0)+1);return a;}
-function renderGraph(){let html=head('EVIDENCE EXPLORATION','Forensic Evidence Graph','Explore how findings connect to dataset samples and related evidence.',btn('Rebuild graph','refresh','btn-small'));
+function renderGraph(){
+ let html=head('EVIDENCE EXPLORATION','Forensic Evidence Graph','Examine the actual relationships between forensic findings and imported image records.',btn('Run audit','run-audit','btn-primary')+' '+btn('Reload graph','refresh'));
  if(!state.detail)return html+needDataset();
- html+=notice('Graph edges represent detector evidence or audit associations, not proof that images originate from the same patient.');
  const g=state.graph||{nodes:[],edges:[]};
- html+=`<div class="card card-padded"><div class="card-title"><h3>Evidence network</h3><div class="graph-legend"><span class="legend-item"><span class="legend-dot"></span>Samples</span><span class="legend-item"><span class="legend-dot blue"></span>Findings</span><span class="legend-item"><span class="legend-dot amber"></span>High priority</span></div></div>${g.nodes?.length?`<div class="node-graph" id="nodeGraph" role="group" aria-label="Interactive network of forensic findings and image samples"></div><div class="fine" style="margin-top:13px">${number(g.nodes.length)} nodes · ${number(g.edges.length)} connections · Select a finding node to review it. ${g.truncated?'Showing a limited subset.':''}</div>`:empty('No graph evidence yet','Run a forensic audit to generate connected findings.')}</div>`;
+ const status=g.audit_completed?(g.finding_count?`Connected evidence from ${number(g.finding_count)} ranked findings`:'Audit completed; no linked findings detected'):'No completed audit yet';
+ html+=notice(g.note||'Graph links are detector observations, not proof of shared patient identity.',g.audit_completed?'':'warn');
+ html+=`<div class="card card-padded"><div class="card-title"><h3>${esc(status)}</h3><div class="graph-legend"><span class="legend-item"><span class="legend-dot"></span>Image record</span><span class="legend-item"><span class="legend-dot blue"></span>Finding</span></div></div>`;
+ if(g.nodes?.length){
+  html+=`<div id="nodeGraph" class="node-graph" role="region" aria-label="Audited evidence network"></div><p class="fine" style="margin-top:12px">${number(g.nodes.length)} real nodes, ${number(g.edges.length)} evidenced links. Select a labelled record or finding to inspect it. ${g.truncated?'Showing a priority-ranked subset of findings.':''}</p>`;
+ }else html+=empty('No source records available','Import research images and run an audit to discover evidence links.',btn('Import dataset','import'));
+ html+='</div>';
+ if(!g.audit_completed)html+=`<div class="module-next" style="margin-top:20px"><div><strong>Generate the first evidence network</strong><p>Run the audit. The network will only draw links supported by detector findings.</p></div>${btn(icon('play')+' Run forensic audit','run-audit','btn-primary')}</div>`;
+ if(g.audit_completed&&g.nodes?.some(n=>n.type==='finding')){
+   const list=g.nodes.filter(n=>n.type==='finding').slice(0,12).map(n=>`<button type="button" class="graph-list-item" data-finding="${esc(n.id.slice(2))}"><span>${esc(n.label)}</span>${pill(n.status||'suspected')}${icon('arrow')}</button>`).join('');
+   html+=card('Evidence finding index',`<div class="graph-finding-index">${list}</div><p class="tiny">Select a finding to inspect source images, measurements and review history.</p>`);
+ }
  return html;
 }
-function labBase(eyebrow,titleText,desc,kind,buttonText='Run research experiment'){const d=state.detail?.dataset;
+
+function labBase(eyebrow,titleText,desc,kind,buttonText='Run research experiment'){
+ const d=state.detail?.dataset;
  let html=head(eyebrow,titleText,desc);
- if(!d)return {html:html+needDataset(),e:null};
- html+=notice('Outputs are exploratory software research results, not clinical validation or causal evidence.');
- const e=bestExp(kind);if(['shortcut','counterfactual','cross_dataset'].includes(kind)&&!bestExp('baseline'))html+=notice('Run the CPU baseline in Model Failure Explorer before starting this lab. The model checkpoint is required for consistent predictions.','warn')+btn(icon('play')+' Train baseline','baseline-launch','btn-small');html+=`<div class="lab-hero"><div class="lab-feature"><span class="lab-icon">${icon(kind==='impact'?'chart':kind==='shortcut'?'scan':kind==='cross_dataset'?'git':'layers')}</span><div><h3>${esc(d.name)}</h3><p>${esc(desc)}</p></div></div><button type="button" class="btn btn-primary" data-experiment="${esc(kind)}">${icon('play')} ${esc(buttonText)}</button></div>`;
- if(!e)html+=empty('No completed results for this lab','Start an experiment. Progress will appear in the Analysis Jobs panel.');
+ if(!d)return {html:html+needDataset(),e:null,ready:false};
+ const baselineRequired=['shortcut','counterfactual','cross_dataset'].includes(kind);
+ const ready=!baselineRequired||Boolean(bestExp('baseline'));
+ const e=bestExp(kind);
+ html+=notice('These are research-only sensitivity experiments, not clinical validation or proof of causal shortcut learning.');
+ if(!ready)html+=`<div class="lab-prerequisite" role="status">${icon('alert')}<div><strong>First complete the CPU baseline</strong><p>The ${esc(titleText)} uses a saved model checkpoint. Without it, there is nothing to compare. A failed or queued model run does not satisfy this requirement.</p></div>${btn('Train baseline','baseline-launch','btn-primary')}</div>`;
+ const action=kind==='counterfactual'?'counterfactual-launch':kind==='cross_dataset'?'cross-launch':kind;
+ const launch=ready?`<button type="button" class="btn btn-primary" data-action="${esc(action)}">${icon('play')} ${esc(buttonText)}</button>`:
+ `<span class="fine">Awaiting trained baseline</span>`;
+ html+=`<div class="lab-hero"><div class="lab-feature"><span class="lab-icon">${icon(kind==='impact'?'chart':kind==='shortcut'?'scan':kind==='cross_dataset'?'git':'layers')}</span><div><h3>${esc(d.name)}</h3><p>${esc(desc)}</p></div></div>${launch}</div>`;
+ if(!e)html+=`<div class="lab-no-result"><strong>No completed experiment yet.</strong><p>After you start a valid run, open Analysis Jobs to see progress or the exact failure reason. Completed results will appear here automatically.</p>${btn('Open Analysis Jobs','jobs','btn-small')}</div>`;
  else html+=`<div class="result-title">Latest completed run · ${esc(e.id)}</div>`;
- return {html,e};
+ return {html,e,ready};
 }
+
 function renderShortcut(){const {html,e}=labBase('MODEL INVESTIGATION','AI Shortcut Inspector','Stress-test model predictions by removing a small corner region; quantify output changes, without assuming causality.','shortcut','Probe shortcut sensitivity');
  if(!e)return html;
  const r=e.result;return html+`<div class="stats-row">${stat('Test images',number(r.test_n),'Frozen test partition')}${stat('Prediction flip rate',pct(r.prediction_flip_rate),'Change after corner mask')}${stat('Confidence variation',pct(r.mean_max_confidence_change),'Mean absolute change')}${stat('Probe region',r.region?.split(' ')[0]||'Corner','Controlled perturbation')}</div>${notice(r.caveat,'warn')}${card('Experimental protocol',`<div class="diagram"><div class="item"><span>CONTROL</span><strong>Original images</strong><p>Feature extraction and frozen model inference</p></div><div class="item"><span>INTERVENTION</span><strong>Corner mask</strong><p>Occlude a consistent region in each test image</p></div><div class="item"><span>COMPARISON</span><strong>Prediction stability</strong><p>Flip rate and confidence change</p></div></div>`)}`;
 }
-function renderCounterfactual(){const {html,e}=labBase('CONTROLLED PERTURBATIONS','Counterfactual Lab','Compare predictions under brightness, blur and corner-mask transformations of the same sample.','counterfactual','Run image perturbations');
+function renderCounterfactual(){
+ const {html,e,ready}=labBase('CONTROLLED PERTURBATIONS','Counterfactual Lab','Test how a saved CPU model reacts to four controlled changes of a research image.','counterfactual','Run image perturbations');
  if(!state.detail)return html;
- const opts=(state.samples?.items||[]).map(s=>`<option value="${esc(s.id)}">${esc(s.sample_id)} — ${esc(s.label)}</option>`).join('');
- let h=html.replace('data-experiment="counterfactual"','data-action="counterfactual-launch"');
- h+=`<div class="card card-padded" style="margin-bottom:20px"><div class="card-title"><h3>Select a research image</h3></div><select class="select" id="counterSample" aria-label="Image to perturb">${opts}</select><p class="fine" style="margin-top:10px">Showing the current sample page. Use Dataset DNA to explore other image records.</p></div>`;
- if(e){const r=e.result;h+=`<div class="result-title">Latest perturbation result</div><div class="two-col equal">${card('Baseline prediction',`<div class="measure-grid"><div class="measure"><strong>${esc(r.original_prediction)}</strong><span>Predicted label</span></div><div class="measure"><strong>${pct(r.original_confidence)}</strong><span>Model confidence</span></div></div><p class="fine" style="margin-top:15px">Original reference label: ${esc(r.recorded_label)}</p>`)}${card('Experiment details',`<p class="fine">Experiment ID: <code>${esc(e.id)}</code></p><div class="rule"></div><p class="fine">${esc(r.caveat)}</p>`)}</div><div class="variant-grid">${(r.variants||[]).map(v=>`<div class="variant"><img loading="lazy" src="/artifacts/${esc(v.image_path)}" alt="${esc(v.name)} transformed sample"><div class="content"><strong>${esc(title(v.name))}</strong><p>${esc(v.predicted)} · ${pct(v.confidence)} confidence ${v.changed_prediction?pill('Prediction changed','amber'):pill('Stable','green')}</p></div></div>`).join('')}</div>`;}
+ const sampleRows=state.samples?.items||[];
+ const selected=sampleRows.find(x=>x.id===(state.counterSampleId||e?.result?.sample_id))||sampleRows[0]||null;
+ const opts=sampleRows.map(s=>`<option value="${esc(s.id)}" ${s.id===selected?.id?'selected':''}>${esc(s.sample_id)} — ${esc(s.label)} (${esc(s.split)})</option>`).join('');
+ let h=html;
+ h+=`<section class="card card-padded counter-lab-card"><div class="card-title"><h3>Choose an image and transformation</h3>${pill('Image preview · no AI result','blue')}</div><div class="field"><label for="counterSample">Research sample</label><select class="select" id="counterSample" ${!selected?'disabled':''}>${opts||'<option>No image samples available</option>'}</select><small>These are imported image records. Changes in the preview are not model predictions.</small></div><div class="counter-stage"><div class="counter-panel"><span>Original image</span>${selected?`<img id="counterOriginalImage" src="${esc(selected.image_url)}" alt="Original image in dataset">`:'<div class="counter-missing">No samples imported</div>'}</div><div class="counter-panel"><span>Visual transformation preview</span><div id="counterfactualPreview" class="counter-real-preview">${selected?`<img id="counterModifiedImage" src="${esc(selected.image_url)}" alt="Visual preview of selected transformation">`:'<div class="counter-missing">Choose a sample</div>'}<div class="mask-block" id="counterfactualMask" hidden></div></div></div><div class="preview-controls"><div class="field"><label for="counterfactualMode">Preview transformation</label><select class="select" id="counterfactualMode"><option value="brightness">Brightness</option><option value="blur">Blur</option><option value="mask">Corner mask</option></select></div><div class="field"><label for="counterfactualAmount">Experiment strength <output id="counterfactualReadout" for="counterfactualAmount">40%</output></label><input id="counterfactualAmount" type="range" min="0" max="100" value="40" step="5"></div></div><div class="counter-explanation">The model experiment applies the chosen strength to four predefined transformations and records the resulting predictions. The browser preview illustrates a single selected transformation; it is not used for scoring.</div>${!ready?notice('Train the baseline first to enable a real model experiment.','warn'):''}</section>`;
+ if(e&&selected?.id!==e.result?.sample_id)h+=notice('The latest result belongs to a different image. Run the experiment again to evaluate the currently selected record.','warn');
+ if(e&&selected?.id===e.result?.sample_id){const r=e.result;h+=`<div class="stats-row">${stat('Original prediction',r.original_prediction,'CPU baseline result')}${stat('Original confidence',pct(r.original_confidence),'Not diagnostic certainty')}${stat('Strength used',pct(r.strength??.4),'Recorded configuration')}${stat('Variants',number(r.variants?.length),'Controlled transformations')}</div><div class="variant-grid">${(r.variants||[]).map(v=>`<div class="variant"><img loading="lazy" src="/artifacts/${esc(v.image_path)}" alt="${esc(v.name)} transformed sample"><div class="content"><strong>${esc(title(v.name))}</strong><p>${esc(v.predicted)} · ${pct(v.confidence)} confidence ${v.changed_prediction?pill('Prediction changed','amber'):pill('Stable','green')}</p></div></div>`).join('')}</div>${notice(r.caveat,'warn')}`;}
  return h;
 }
+
 function renderCross(){let {html,e}=labBase('GENERALIZATION TEST','Cross-Dataset Reliability Lab','Evaluate a frozen baseline model against a second, explicitly compatible research dataset.','cross_dataset','Run external evaluation');
  if(!state.detail)return html;
  html=html.replace('data-experiment="cross_dataset"','data-action="cross-launch"');
@@ -211,7 +273,7 @@ function renderRepro(){const d=state.detail?.dataset;let html=head('SCIENTIFIC T
 function renderPrivacy(){let html=head('DATA GOVERNANCE','Privacy & Integrity Guard','Local-first processing, bounded uploads, transparent access and documented research limitations.');
  const p=state.privacy||{};
  html+=`<div class="three-col">${featureCard('01','Local inference','Models run on your computer without paid or remote inference APIs.','overview')}${featureCard('02','Protected image storage','Raw data sits outside the web frontend and is served by validated API paths.','dna')}${featureCard('03','Controlled exports','Evidence files disclose detector assumptions and clinical limitations.','repro')}</div>`;
- html+=`<div class="two-col equal">${card('Active technical protections',`<ul class="feature-list"><li>ZIP traversal and symlink checks</li><li>Upload size and per-image decoding limits</li><li>Only supported NPZ arrays; no pickle loading</li><li>Relative-path validation before image access</li><li>Data and artifacts kept outside public web root</li><li>No default outbound telemetry</li><li>Optional localhost access token</li><li>Strict no-cache for research records</li></ul>`)}${card('Research-data responsibility',`<p class="fine" style="margin-bottom:15px">This workstation software does not automatically de-identify images. Upload only data you are authorized to use. Respect each dataset's licensing and permitted redistribution conditions.</p>${notice('Do not expose the local server to a public network or upload real identifiable clinical data without proper institutional governance.','warn')}<div class="scope-label">LOCAL SESSION ACCESS</div><div class="field"><label for="authToken">Optional access token</label><input class="input" type="password" id="authToken" value="" autocomplete="off" placeholder="Set if MDF_ACCESS_TOKEN is configured"><small>Stored only for this browser tab/session, never bundled with the project.</small></div>${btn('Apply token','save-token','btn-small')}`)}</div>`;
+ html+=`<div class="two-col equal">${card('Active technical protections',`<ul class="feature-list"><li>ZIP traversal and symlink checks</li><li>Upload size and per-image decoding limits</li><li>Only supported NPZ arrays; no pickle loading</li><li>Relative-path validation before image access</li><li>Data and artifacts kept outside public web root</li><li>No default outbound telemetry</li><li>Optional localhost access token</li><li>Strict no-cache for research records</li></ul>`)}${card('Research-data responsibility',`<p class="fine" style="margin-bottom:15px">This workstation software does not automatically de-identify images. Upload only data you are authorized to use. Respect each dataset's licensing and permitted redistribution conditions.</p>${notice('Do not expose the local server to a public network or upload real identifiable clinical data without proper institutional governance.','warn')}<div class="scope-label">LOCAL SESSION ACCESS · ${p.token_required?'TOKEN ENABLED':'TOKEN DISABLED (DEFAULT)'}</div><p class="fine" style="margin:12px 0">${p.token_required?'Enter the secret configured in PowerShell with MDF_ACCESS_TOKEN before launching the server.':'No access token is necessary when running locally at 127.0.0.1 and MDF_ACCESS_TOKEN has not been set. Never expose this default setup on a public network.'}</p><div class="field"><label for="authToken">Optional access token</label><input class="input" type="password" id="authToken" value="" autocomplete="off" placeholder="Set if MDF_ACCESS_TOKEN is configured"><small>Stored only for this browser tab/session, never bundled with the project.</small></div>${p.token_required?btn('Apply token','save-token','btn-small'):'<span class="fine">Not configured. You can leave this field empty.</span>'}`)}</div>`;
  return html;
 }
 function renderError(error){$('#main').innerHTML=head('REQUEST ERROR','We could not load this workspace','Check the backend or the research data and retry.')+`<div class="card card-padded">${notice(error?.message||String(error),'warn')}${btn(icon('rotate')+' Retry','refresh','btn-primary')} ${btn('Set access token','auth-prompt')}</div>`;}
@@ -233,7 +295,7 @@ async function loadView(){const did=state.did;
   state.findings=await api(`/api/datasets/${did}/findings${q}`);
   if(state.view==='audit')state.rankings=await api(`/api/datasets/${did}/rankings?budget=${state.rankingBudget||4}`);
  }
- if(state.view==='graph')state.graph=await api(`/api/datasets/${did}/graph?limit=95`);
+ if(state.view==='graph')state.graph=await api(`/api/datasets/${did}/graph?limit=30`);
  if(state.view==='privacy')state.privacy=await api('/api/privacy');
 }
 const RENDER={overview:renderOverview,dna:renderDNA,audit:renderAudit,graph:renderGraph,review:renderReview,shortcut:renderShortcut,counterfactual:renderCounterfactual,cross:renderCross,impact:renderImpact,failures:renderFailures,repro:renderRepro,privacy:renderPrivacy};
@@ -241,17 +303,28 @@ async function render(){try{$('#main').innerHTML='<div class="loading-screen"><d
 async function refresh(full=true){try{if(full)await loadCore();await render()}catch(e){renderError(e)}}
 function navigate(view){state.view=RENDER[view]?view:'overview';window.location.hash='#/'+state.view;$('#sidebar').classList.remove('open');$('#mobileOverlay').hidden=true;$('#menuToggle').setAttribute('aria-expanded','false');state.findingPage=1;render();window.scrollTo({top:0,behavior:'instant'})}
 async function changeDataset(did){state.did=did;storage.set('localStorage','mdf-dataset',did);state.activeFilters={kind:'',status:''};state.samplePage=1;state.findingPage=1;await refresh(true);toast('Research dataset selected.');}
-function drawGraph(graph){const box=$('#nodeGraph');if(!box)return;
- const nodes=graph.nodes.slice(0,220),edge=graph.edges;const width=900,height=450,cx=450,cy=220;const pos={};
- // Deterministic concentric layout: findings inside, samples around
- const findings=nodes.filter(n=>n.type==='finding'),samples=nodes.filter(n=>n.type==='sample');
- findings.forEach((n,i)=>{const a=2*Math.PI*i/Math.max(1,findings.length);pos[n.id]={x:cx+160*Math.cos(a),y:cy+137*Math.sin(a)}});
- samples.forEach((n,i)=>{const a=2*Math.PI*i/Math.max(1,samples.length);pos[n.id]={x:cx+310*Math.cos(a),y:cy+185*Math.sin(a)}});
- const line=edge.filter(x=>pos[x.source]&&pos[x.target]).map(x=>`<line x1="${pos[x.source].x.toFixed(1)}" y1="${pos[x.source].y.toFixed(1)}" x2="${pos[x.target].x.toFixed(1)}" y2="${pos[x.target].y.toFixed(1)}" stroke="#abc5c4" stroke-width="1.05" opacity=".65"/>`).join('');
- const circles=nodes.map(n=>{const p=pos[n.id];const color=n.type==='sample'?'#237568':n.severity==='critical'||n.severity==='high'?'#bf8c4a':'#5a89bd';const r=n.type==='sample'?4:6.5;return `<g class="graph-node" tabindex="0" role="button" aria-label="${esc(n.label)}" data-node="${esc(n.id)}" style="cursor:pointer"><circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${r}" fill="${color}" stroke="#fff" stroke-width="1.7"/><title>${esc(n.label)}</title></g>`}).join('');
- box.innerHTML=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" aria-label="Audit evidence graph" role="group"><g>${line}</g><g>${circles}</g></svg>`;
+function drawGraph(graph){
+ const box=$('#nodeGraph');if(!box)return;
+ const fs=graph.nodes.filter(n=>n.type==='finding').slice(0,12);
+ const fids=new Set(fs.map(n=>n.id));
+ const referenced=new Set(graph.edges.filter(e=>fids.has(e.source)).map(e=>e.target));
+ const samples=graph.nodes.filter(n=>n.type==='sample'&&(fs.length===0||referenced.has(n.id))).slice(0,18);
+ const nodes=[...fs,...samples];if(!nodes.length)return;
+ const height=Math.max(340,Math.max(fs.length,samples.length)*58+75),width=950;
+ const pos={};const place=(items,x)=>items.forEach((n,i)=>{pos[n.id]={x,y:45+(i+.5)*(height-90)/Math.max(1,items.length)}});
+ place(samples,210);place(fs,720);
+ const edge=graph.edges.filter(e=>pos[e.source]&&pos[e.target]).map(e=>{
+  const a=pos[e.source.startsWith('s:')?e.source:e.target],b=pos[e.source.startsWith('f:')?e.source:e.target];return `<path d="M${a.x+112},${a.y} C${a.x+290},${a.y} ${b.x-275},${b.y} ${b.x-112},${b.y}" fill="none" stroke="var(--teal)" stroke-opacity=".45" stroke-width="2"/>`;
+ }).join('');
+ const cards=nodes.map(n=>{const p=pos[n.id],isFinding=n.type==='finding';const sub=isFinding?(n.status||'suspected').toUpperCase():(n.split||'image').toUpperCase();
+  const label=n.label.length>30?n.label.slice(0,29)+'…':n.label;
+  return `<g tabindex="0" role="button" data-node="${esc(n.id)}" aria-label="Inspect ${esc(n.label)}" class="graph-card" transform="translate(${p.x-112},${p.y-24})"><rect width="224" height="48" rx="9" class="graph-card-bg ${isFinding?'graph-card-finding':''}"/><rect width="5" height="30" x="11" y="9" rx="2.5" fill="${isFinding?'#4779b6':'#237568'}"/><text class="graph-label" x="23" y="21">${esc(label)}</text><text class="graph-caption" x="23" y="36">${esc(sub)}</text><title>${esc(n.label)}</title></g>`;
+ }).join('');
+ const description=fs.length?`<text x="610" y="24" class="graph-col-title">FORENSIC FINDINGS</text>`:`<text x="510" y="24" class="graph-col-title">NO AUDITED EVIDENCE YET</text>`;
+ box.innerHTML=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" style="min-height:${Math.max(350,Math.min(600,height))}px" role="img" aria-label="${fs.length?'Connected findings and sample records':'Real image sample inventory with no reported links'}"><text x="100" y="24" class="graph-col-title">SOURCE IMAGE RECORDS</text>${description}<g>${edge}</g><g>${cards}</g></svg>`;
  box.querySelectorAll('[data-node]').forEach(el=>{const open=()=>{const id=el.dataset.node;if(id.startsWith('f:'))openFinding(id.slice(2));else openSample(id.slice(2))};el.addEventListener('click',open);el.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();open()}})});
 }
+
 async function openFinding(id){try{const out=await api('/api/findings/'+id);const f=out.finding;let h=`${notice('All findings remain hypotheses unless supported by independently reviewed evidence.')}`;
  h+=`<div class="comparison"><div class="image-panel">${out.sample?`<img src="${esc(out.sample.image_url)}" alt="Primary sample ${esc(out.sample.sample_id)}"><p>${esc(out.sample.sample_id)} · ${esc(out.sample.split)}</p>`:'<div class="empty-state">Dataset-wide finding</div>'}</div><div class="image-panel">${out.linked?`<img src="${esc(out.linked.image_url)}" alt="Linked sample ${esc(out.linked.sample_id)}"><p>${esc(out.linked.sample_id)} · ${esc(out.linked.split)}</p>`:'<div class="empty-state">No second image</div>'}</div></div>`;
  h+=`<div style="display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin:19px 0">${pill(f.kind,'blue')}${pill(f.severity,f.severity==='critical'?'red':f.severity==='high'?'amber':'')}${pill(f.status,f.status==='confirmed'?'green':'')}</div><p style="margin-bottom:18px;font-size:13px">${esc(f.detail)}</p><details><summary class="clickable" style="font-weight:650">Inspect measurement evidence</summary><div class="mono-box" style="margin:12px 0">${esc(JSON.stringify(f.evidence,null,2))}</div></details>`;
@@ -261,13 +334,71 @@ async function openFinding(id){try{const out=await api('/api/findings/'+id);cons
  }catch(e){toast(e.message,true)}}
 async function openSample(id){try{const d=await api('/api/samples/'+id),s=d.sample;openModal('Image record · '+s.sample_id,`<div class="comparison"><div class="image-panel"><img src="${esc(s.image_url)}" alt="Selected research image" style="height:300px"><p>${esc(s.sample_id)}</p></div><div><dl>${[['Label',s.label],['Split',s.split],['Group ID',s.group_id||'Not recorded'],['Group meaning',s.group_type||'Not documented'],['Source site',s.site||'Unknown'],['Dimensions',s.width+'×'+s.height],['SHA256',short(s.sha256)]].map(([k,v])=>`<div class="kv" style="grid-template-columns:100px 1fr"><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl></div></div><div class="rule"></div><h3>Linked forensic findings</h3>${(d.findings||[]).length?`<div class="findings-list" style="margin-top:13px">${d.findings.slice(0,8).map(findingRow).join('')}</div>`:'<p class="fine" style="margin-top:12px">No related audit evidence recorded.</p>'}`)}catch(e){toast(e.message,true)}}
 async function startAudit(){if(!state.did)return toast('Select a dataset first',true);try{const v=await api('/api/datasets/'+state.did+'/audit',{method:'POST'});toast('Forensic analysis queued. Watch Analysis Jobs.');openJobs();}catch(e){toast(e.message,true)}}
-async function launchExperiment(kind,config={}){if(!state.did)return toast('Select a dataset first',true);try{const v=await api('/api/datasets/'+state.did+'/experiments',{method:'POST',body:JSON.stringify({kind,config})});toast(title(kind)+' experiment queued.');openJobs()}catch(e){toast(e.message,true)}}
+async function launchExperiment(kind,config={}){if(!state.did)return toast('Select a dataset first',true);if(['shortcut','counterfactual','cross_dataset'].includes(kind)&&!bestExp('baseline')){toast('Train the CPU baseline first; open Model Failure Explorer.',true);return}try{const v=await api('/api/datasets/'+state.did+'/experiments',{method:'POST',body:JSON.stringify({kind,config})});toast(title(kind)+' experiment queued.');openJobs()}catch(e){toast(e.message,true)}}
 async function openJobs(){try{const rows=await api('/api/jobs');let html=`<p class="fine" style="margin-bottom:15px">Background CPU tasks continue while you explore the workbench. Refresh to check their status.</p><div class="data-list">${rows.length?rows.map(j=>`<div class="data-row"><div style="flex:1"><div class="row-label">${esc(title(j.kind))} ${pill(j.status,j.status==='completed'?'green':j.status==='failed'?'red':j.status==='running'?'amber':'')}</div><div class="row-desc">${esc(j.message)}</div>${j.status==='running'?`<div class="meter" style="margin-top:9px"><div class="meter-fill" style="width:${j.progress}%"></div></div>`:''}${j.error?`<p class="fine" style="color:var(--red);margin-top:7px">${esc(j.error)}</p>`:''}</div>${['queued','running'].includes(j.status)?`<button class="btn btn-small" data-cancel-job="${esc(j.id)}">Cancel</button>`:''}</div>`).join(''):empty('No background jobs','Run an audit or experiment to generate a task.')}</div><div class="actions">${btn(icon('rotate')+' Refresh jobs','jobs','btn-primary')}${btn('Refresh workspace','refresh','')}</div>`;openModal('Analysis jobs',html)}catch(e){toast(e.message,true)}}
-async function openImport(){const html=`<p class="fine" style="margin-bottom:20px">Upload a research dataset to local storage. No cloud transfer. ZIP must include root-level samples.csv with sample_id, image_path, label and split columns. NPZ supports MedMNIST train/val/test arrays.</p><form id="importForm"><div class="field"><label for="fileUpload">Dataset file (.npz or .zip)</label><input class="input" id="fileUpload" type="file" accept=".npz,.zip" required></div><div class="field"><label for="datasetName">Dataset name</label><input class="input" id="datasetName" required minlength="2" maxlength="200" placeholder="e.g. Dermoscopy research subset"></div><div class="field-group"><div class="field"><label for="datasetSource">Source / provenance</label><input class="input" id="datasetSource" value="Local research upload"></div><div class="field"><label for="datasetLicense">License / authorization</label><input class="input" id="datasetLicense" value="Verify dataset provider terms"></div></div><div class="field"><label for="maxImages">Maximum NPZ images per split</label><input class="input" id="maxImages" type="number" min="10" max="10000" value="2000"><small>The import manifest records whether sampling occurred. Use small subsets first on this CPU laptop.</small></div><div class="actions"><button type="submit" class="btn btn-primary">${icon('upload')} Import local research data</button></div></form>`;openModal('Import dataset',html);$('#importForm').addEventListener('submit',async e=>{e.preventDefault();const f=$('#fileUpload').files?.[0];if(!f)return;const b=new FormData();b.append('file',f);b.append('name',$('#datasetName').value);b.append('source',$('#datasetSource').value);b.append('license',$('#datasetLicense').value);b.append('max_per_split',$('#maxImages').value);try{e.target.querySelector('[type="submit"]').disabled=true;toast('Importing local research data…');const out=await api('/api/datasets/import',{method:'POST',body:b});closeModal();state.did=out.dataset_id;await refresh(true);navigate('dna');toast(out.message);}catch(err){toast(err.message,true);e.target.querySelector('[type="submit"]').disabled=false;}})}
+async function openImport(){
+ const html=`<p class="fine" style="margin-bottom:20px">Upload a licensed dataset to your computer. No cloud transfer. NPZ supports MedMNIST train/val/test arrays; ZIP requires a root-level samples.csv with sample_id, image_path, label and split columns.</p>
+ <form id="importForm"><div id="importFields"><div class="field"><label for="fileUpload">Dataset file (.npz or .zip)</label><input class="input" id="fileUpload" type="file" accept=".npz,.zip" required></div>
+ <div class="field"><label for="datasetName">Dataset name</label><input class="input" id="datasetName" required minlength="2" maxlength="200" placeholder="e.g. DermaMNIST"></div>
+ <div class="field-group"><div class="field"><label for="datasetSource">Source / provenance</label><input class="input" id="datasetSource" value="MedMNIST / Zenodo"></div><div class="field"><label for="datasetLicense">License / authorization</label><input class="input" id="datasetLicense" value="Verify dataset provider terms"></div></div>
+ <div class="field"><label for="maxImages">Maximum NPZ images per split</label><input class="input" id="maxImages" type="number" min="10" max="10000" value="500"><small>The import manifest records whether sampling occurred. On an Intel Iris Xe laptop, begin with 500 images per split.</small></div></div>
+ <section class="import-tracker" id="importTracker" hidden aria-label="Import progress">
+  <div class="import-tracker-head"><span id="importPhase" class="import-phase-label">Preparing dataset…</span><strong class="import-percent" id="importPercent">0%</strong></div>
+  <progress id="importProgress" max="100" value="0" aria-label="Dataset upload progress"></progress>
+  <div class="import-working" id="importWorking" hidden aria-hidden="true"><span class="spinner"></span><span>Indexing research images on this computer…</span></div>
+  <p class="import-message" id="importMessage" role="status" aria-live="polite">Preparing local upload.</p>
+  <ol class="import-milestones"><li id="importMilestoneUpload" class="active">1. Upload</li><li id="importMilestoneIndex">2. Verify &amp; index images</li><li id="importMilestoneDone">3. Dataset ready</li></ol>
+  <p class="fine">During indexing, progress cannot be measured precisely. Keep this tab open until the result appears.</p>
+ </section>
+ <div class="actions"><button type="submit" id="importSubmit" class="btn btn-primary">${icon('upload')} <span id="importSubmitLabel">Import local research data</span></button></div></form>`;
+ openModal('Import dataset',html);
+ const form=$('#importForm');
+ form.addEventListener('submit',async e=>{
+  e.preventDefault();if(datasetImportInProgress)return;
+  const f=$('#fileUpload').files?.[0];if(!f)return;
+  const button=$('#importSubmit'),buttonText=$('#importSubmitLabel'),status=$('#importTracker'),bar=$('#importProgress'),phase=$('#importPhase'),pct=$('#importPercent'),message=$('#importMessage');
+  const stamp=(text)=>{message.textContent=text;};
+  const mark=(stage)=>{
+   const indexed=stage==='indexing',done=stage==='done';
+   $('#importMilestoneUpload').className=indexed||done?'done':'active';
+   $('#importMilestoneIndex').className=done?'done':indexed?'active':'';
+   $('#importMilestoneDone').className=done?'done':'';
+  };
+  if(f.size>150*1024*1024){status.hidden=false;phase.textContent='File too large';pct.textContent='';stamp('This release accepts uploads up to 150 MB. PathMNIST (196 MB) must be converted to a smaller subset first.');status.classList.add('import-error');return;}
+  const b=new FormData(); // Inputs use IDs, so populate the upload payload explicitly.
+  b.append('file',f);b.append('name',$('#datasetName').value);b.append('source',$('#datasetSource').value);b.append('license',$('#datasetLicense').value);b.append('max_per_split',$('#maxImages').value);
+  datasetImportInProgress=true;status.hidden=false;status.classList.remove('import-error','import-complete');
+  $('#importFields').querySelectorAll('input').forEach(el=>el.disabled=true);button.disabled=true;$('#modalClose').disabled=true;
+  buttonText.textContent='Import in progress';phase.textContent='Uploading dataset';pct.textContent='0%';bar.hidden=false;$('#importWorking').hidden=true;bar.value=0;stamp(`Uploading ${f.name} (${(f.size/(1024*1024)).toFixed(1)} MB) to the local server…`);mark('upload');
+  const onProgress=(n)=>{bar.value=n;pct.textContent=n+'%';};
+  const onPhase=(stage)=>{if(stage==='indexing'){
+   bar.hidden=true;$('#importWorking').hidden=false;pct.textContent='Processing';phase.textContent='Validating and indexing';
+   stamp('Upload received. Validating file structure, extracting image samples and writing the local research index. This may take a while on CPU.');mark('indexing');
+  }};
+  try{
+   const out=await uploadResearchDataset(b,onProgress,onPhase);
+   datasetImportInProgress=false;$('#modalClose').disabled=false;
+   state.did=out.dataset_id;storage.set('localStorage','mdf-dataset',out.dataset_id);
+   await refresh(true);navigate('dna');
+   status.classList.add('import-complete');bar.hidden=false;$('#importWorking').hidden=true;bar.value=100;
+   pct.textContent='Complete';phase.textContent='Dataset imported successfully';mark('done');
+   stamp('Your dataset is indexed locally and is now selected. Open Dataset DNA to inspect its images, splits and provenance.');
+   button.disabled=false;button.type='button';buttonText.textContent='View Dataset DNA';
+   button.onclick=()=>{closeModal();navigate('dna')};
+   toast(`${f.name} imported successfully. Dataset DNA is ready.`);
+  }catch(err){
+   datasetImportInProgress=false;$('#modalClose').disabled=false;status.classList.add('import-error');bar.hidden=true;$('#importWorking').hidden=true;
+   pct.textContent='Failed';phase.textContent='Import did not finish';stamp(err.message||String(err));
+   button.disabled=false;buttonText.textContent='Retry import';
+   $('#importFields').querySelectorAll('input').forEach(el=>el.disabled=false);
+   toast('Dataset import failed. See the explanation in the import dialog.',true);
+  }
+ });
+}
 async function openDemo(){openModal('Generate synthetic research sandbox',`<p class="fine" style="margin-bottom:18px">Creates geometric phantoms, not medical images. Known label flips, exact copies, near copies and group overlaps are injected so detectors can be sanity-tested.</p><div class="field-group"><div class="field"><label for="demoCount">Number of base patterns</label><input class="input" id="demoCount" type="number" min="40" max="1200" value="128"></div><div class="field"><label for="demoSeed">Generation seed</label><input class="input" id="demoSeed" type="number" min="1" max="999999" value="42"></div></div><div class="actions">${btn(icon('plus')+' Create training sandbox','create-demo','btn-primary')}</div>`)}
 async function createDemo(){const button=document.querySelector('[data-action="create-demo"]');if(button)button.disabled=true;const returnTo=state.view;try{const out=await api('/api/datasets/demo',{method:'POST',body:JSON.stringify({count:Number($('#demoCount').value),seed:Number($('#demoSeed').value)})});closeModal();state.did=out.dataset_id;storage.set('localStorage','mdf-dataset',out.dataset_id);await refresh(true);navigate(returnTo==='overview'?'dna':returnTo);toast('Created an entirely synthetic, local research sandbox.')}catch(e){toast(e.message,true);if(button)button.disabled=false}}
 async function showExperiment(id){try{const e=await api('/api/experiments/'+id);openModal('Experiment manifest · '+title(e.kind),`<p class="fine">${esc(e.status)} · Research record ${esc(e.id)}</p><div class="scope-label" style="margin-top:18px">EXPERIMENT CONFIGURATION</div><div class="mono-box">${esc(JSON.stringify(e.config,null,2))}</div><div class="scope-label" style="margin-top:18px">RECORDED RESULT</div><div class="mono-box">${esc(JSON.stringify(e.result,null,2))}</div>`)}catch(e){toast(e.message,true)}}
-async function handleAction(action){switch(action){case 'import':return openImport();case 'demo':return openDemo();case 'create-demo':return createDemo();case 'run-audit':return startAudit();case 'jobs':return openJobs();case 'refresh':return refresh(true);case 'rankings':state.rankingBudget=Number($('#rankingBudget')?.value||4);state.rankings=await api('/api/datasets/'+state.did+'/rankings?budget='+state.rankingBudget);$('#rankingResult').innerHTML=renderRankings();return;case 'filter-findings':state.activeFilters={kind:$('#findingKind')?.value||'',status:$('#findingStatus')?.value||''};state.findingPage=1;return render();case 'filter-samples':state.sampleFilter=`&split=${encodeURIComponent($('#dnaSplit').value)}&label=${encodeURIComponent($('#dnaLabel').value)}&search=${encodeURIComponent($('#dnaSearch').value)}`;state.samplePage=1;return render();case 'go-audit':return navigate('audit');case 'go-privacy':return navigate('privacy');case 'baseline-launch':return launchExperiment('baseline',{seed:42});case 'counterfactual-launch':{const sid=$('#counterSample')?.value;if(!sid)return toast('Select a research image first',true);return launchExperiment('counterfactual',{sample_id:sid})}case 'cross-launch':{const did=$('#crossTarget')?.value;if(!did)return toast('Select a target dataset first',true);return launchExperiment('cross_dataset',{target_dataset_id:did})}case 'scenario-launch':return launchExperiment('scenario',{seed:Number($('#scenarioSeed').value),label_flip_rate:Number($('#scenarioRate').value)});case 'verify-integrity':{if(!state.did)return toast('Select a dataset first',true);try{const info=await api('/api/datasets/'+state.did+'/verify');const target=$('#integrityResults');if(target)target.innerHTML=`<div class="notice ${info.passed?'':'warning'}" style="margin-top:12px"><strong>${info.passed?'Integrity check passed':'Integrity check found issues'}</strong><p>Files checked: ${number(info.checked_files)} · Problems: ${number(info.problem_count)}</p><p class="fine">${esc((info.problems||[]).slice(0,5).map(p=>p.kind+': '+(p.sample_id||'manifest')).join('; ') || 'No recorded mismatches.')}</p></div>`;}catch(e){toast(e.message,true)}return;}case 'download-json':window.location.href='/api/datasets/'+state.did+'/report?format=json';return;case 'auth-prompt':openModal('Local access token',`<div class="field"><label for="authToken">MDF_ACCESS_TOKEN</label><input class="input" type="password" id="authToken" placeholder="Enter configured token"></div>${btn('Authenticate','save-token','btn-primary')}`);return;case 'save-token':storage.set('sessionStorage','mdf-token',$('#authToken').value);await api('/api/session',{method:'POST'});toast('Authenticated for this local session');return;default:toast('Unknown control: '+action,true)}}
+async function handleAction(action){switch(action){case 'import':return openImport();case 'demo':return openDemo();case 'create-demo':return createDemo();case 'run-audit':return startAudit();case 'jobs':return openJobs();case 'refresh':return refresh(true);case 'rankings':{state.rankingBudget=Number($('#rankingBudget')?.value||4);const target=$('#rankingResult');if(target)target.innerHTML='<div class="rank-pending" role="status">Comparing real candidate order…</div>';state.rankings=await api('/api/datasets/'+state.did+'/rankings?budget='+state.rankingBudget);if(target)target.innerHTML=renderRankings();return;}case 'filter-findings':state.activeFilters={kind:$('#findingKind')?.value||'',status:$('#findingStatus')?.value||''};state.findingPage=1;return render();case 'filter-samples':state.sampleFilter=`&split=${encodeURIComponent($('#dnaSplit').value)}&label=${encodeURIComponent($('#dnaLabel').value)}&search=${encodeURIComponent($('#dnaSearch').value)}`;state.samplePage=1;return render();case 'go-audit':return navigate('audit');case 'go-privacy':return navigate('privacy');case 'baseline-launch':return launchExperiment('baseline',{seed:42});case 'shortcut':return launchExperiment('shortcut',{seed:42});case 'impact':return launchExperiment('impact',{seed:42});case 'counterfactual-launch':{const sid=$('#counterSample')?.value;if(!sid)return toast('Select a research image first',true);return launchExperiment('counterfactual',{sample_id:sid,strength:Number($('#counterfactualAmount')?.value||40)/100})}case 'cross-launch':{const did=$('#crossTarget')?.value;if(!did)return toast('Select a target dataset first',true);return launchExperiment('cross_dataset',{target_dataset_id:did})}case 'scenario-launch':return launchExperiment('scenario',{seed:Number($('#scenarioSeed').value),label_flip_rate:Number($('#scenarioRate').value)});case 'verify-integrity':{if(!state.did)return toast('Select a dataset first',true);try{const info=await api('/api/datasets/'+state.did+'/verify');const target=$('#integrityResults');if(target)target.innerHTML=`<div class="notice ${info.passed?'':'warning'}" style="margin-top:12px"><strong>${info.passed?'Integrity check passed':'Integrity check found issues'}</strong><p>Files checked: ${number(info.checked_files)} · Problems: ${number(info.problem_count)}</p><p class="fine">${esc((info.problems||[]).slice(0,5).map(p=>p.kind+': '+(p.sample_id||'manifest')).join('; ') || 'No recorded mismatches.')}</p></div>`;}catch(e){toast(e.message,true)}return;}case 'download-json':window.location.href='/api/datasets/'+state.did+'/report?format=json';return;case 'auth-prompt':openModal('Local access token',`<div class="field"><label for="authToken">MDF_ACCESS_TOKEN</label><input class="input" type="password" id="authToken" placeholder="Enter configured token"></div>${btn('Authenticate','save-token','btn-primary')}`);return;case 'save-token':storage.set('sessionStorage','mdf-token',$('#authToken').value);await api('/api/session',{method:'POST'});toast('Authenticated for this local session');return;default:toast('Unknown control: '+action,true)}}
 document.addEventListener('click',async e=>{
  const nav=e.target.closest('[data-view]');if(nav){navigate(nav.dataset.view);return}
  const act=e.target.closest('[data-action]');if(act){act.disabled=true;try{await handleAction(act.dataset.action)}catch(err){toast(err.message,true)}finally{if(act.isConnected)act.disabled=false}return}
@@ -286,7 +417,7 @@ $('#importTrigger').addEventListener('click',openImport);$('#jobsTrigger').addEv
 $('#modalBackdrop').addEventListener('click',e=>{if(e.target===$('#modalBackdrop'))closeModal()});
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();if(e.key==='Tab'&&!$('#modalBackdrop').hidden){const focusable=[...$('#modal').querySelectorAll('button:not([disabled]),a[href],input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex="0"]')];if(focusable.length){const first=focusable[0],last=focusable[focusable.length-1];if(e.shiftKey&&document.activeElement===first){last.focus();e.preventDefault()}else if(!e.shiftKey&&document.activeElement===last){first.focus();e.preventDefault()}}}});
 document.addEventListener('input',e=>{if(e.target.id==='counterfactualAmount')updateCounterfactualPreview()});
-document.addEventListener('change',e=>{if(e.target.id==='counterfactualMode')updateCounterfactualPreview()});
+document.addEventListener('change',e=>{if(e.target.id==='counterfactualMode')updateCounterfactualPreview();if(e.target.id==='counterSample'){const sample=state.samples?.items?.find(s=>s.id===e.target.value);if(sample){state.counterSampleId=sample.id;for(const id of ['counterOriginalImage','counterModifiedImage']){const el=$('#'+id);if(el)el.src=sample.image_url}updateCounterfactualPreview()}}});
 $('#datasetSelect').addEventListener('change',e=>changeDataset(e.target.value));
 $('#menuToggle').addEventListener('click',()=>{$('#sidebar').classList.toggle('open');const opened=$('#sidebar').classList.contains('open');$('#mobileOverlay').hidden=!opened;$('#menuToggle').setAttribute('aria-expanded',String(opened))});
 $('#mobileOverlay').addEventListener('click',()=>{$('#sidebar').classList.remove('open');$('#mobileOverlay').hidden=true;$('#menuToggle').setAttribute('aria-expanded','false')});

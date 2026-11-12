@@ -84,3 +84,36 @@ test('all no-data research pages disclose that results need a real dataset',()=>
   assert.ok(html.includes('actual findings will appear only after you load research images.'),view);
  }
 });
+
+test('real-data ranking compare displays candidate order without inventing verified defect counts',()=>{
+ const result=vm.runInContext(`state.rankings={review_budget:6,candidate_count:14,ground_truth_available:false,method:'Fixed candidates',caveat:'Independent truth unavailable',strategies:[{name:'IGAT (experimental)',review_budget:6,overlap_with_igat:6,top_candidates:[{id:'fx1',title:'Potential split overlap',kind:'split_leakage',sample_id:'im-1',priority:.81,confidence:.71}]}]};renderRankings()`,ctx);
+ assert.ok(result.includes('data-ranking-budget="6"'));
+ assert.ok(result.includes('6/6 overlap with IGAT'));
+ assert.ok(result.includes('data-finding="fx1"'));
+ assert.ok(result.includes('No validated defect yield'));
+ assert.ok(!result.includes('known injected defects'));
+});
+test('evidence graph renders an explicit sample inventory when no audit has completed',()=>{
+ const result=vm.runInContext(`state.detail={dataset:{id:'demo',name:'Research set'}};state.graph={audit_completed:false,network_mode:'sample_inventory',finding_count:0,nodes:[{id:'s:s1',label:'image-1',type:'sample',split:'train'}],edges:[],note:'No completed audit.'};renderGraph()`,ctx);
+ assert.ok(result.includes('id="nodeGraph"'));
+ assert.ok(result.includes('No completed audit'));
+ assert.ok(result.includes('data-action="run-audit"'));
+});
+test('shortcut and counterfactual make a trained baseline a visible prerequisite',()=>{
+ const result=vm.runInContext(`state.detail={dataset:{id:'demo',name:'Research set'},experiments:[]};state.samples={items:[{id:'a',sample_id:'image-1',label:'0',split:'test',image_url:'/files/a'}]};[renderShortcut(),renderCounterfactual()]`,ctx);
+ assert.ok(result[0].includes('Train baseline'));
+ assert.ok(!result[0].includes('data-action="shortcut"'));
+ assert.ok(result[1].includes('id="counterfactualAmount"'));
+ assert.ok(result[1].includes('id="counterModifiedImage"'));
+ assert.ok(!result[1].includes('data-action="counterfactual-launch"'));
+});
+test('completed baseline enables real lab actions and parameter preview',()=>{
+ const result=vm.runInContext(`state.detail={dataset:{id:'demo',name:'Research set'},experiments:[{kind:'baseline',status:'completed',result:{}}]};state.samples={items:[{id:'a',sample_id:'image-1',label:'0',split:'test',image_url:'/files/a'}]};[renderShortcut(),renderCounterfactual()]`,ctx);
+ assert.ok(result[0].includes('data-action="shortcut"'));
+ assert.ok(result[1].includes('data-action="counterfactual-launch"'));
+});
+test('access token panel explains that localhost does not require a token by default',()=>{
+ const result=vm.runInContext(`state.privacy={token_required:false};renderPrivacy()`,ctx);
+ assert.ok(result.includes('TOKEN DISABLED (DEFAULT)'));
+ assert.ok(result.includes('No access token is necessary'));
+});
