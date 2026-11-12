@@ -17,7 +17,7 @@ from sklearn.metrics import f1_score,balanced_accuracy_score,accuracy_score,conf
 from .db import Session,Dataset,Sample,Finding,AuditRun,now,jd,jl,uid
 from .security import safe_path,sha_file,image_info
 
-DETECTOR_VERSION='mdf-0.8.0'
+DETECTOR_VERSION='mdf-0.9.0'
 KIND_COST={'exact_duplicate':0.6,'pixel_duplicate':0.6,'split_leakage':0.9,'group_overlap':0.8,'near_duplicate':1.2,'label_suspicion':1.7,'integrity':0.5,'source_association':1.3}
 SEVERITY={'critical':1.,'high':.8,'medium':.55,'low':.3}
 
@@ -220,6 +220,11 @@ def forensic_graph(db,dataset_id,limit=100):
 
 
 def ranking_comparison(db,dataset_id,budget=15):
+    """Exploratory issue-yield ranking comparison on known synthetic truth ONLY.
+
+    Rank input and budget are identical. Random baseline uses 30 independent
+    fixed seeds; all remaining methods use fixed, fully documented criteria.
+    """
     latest=db.scalar(select(AuditRun.id).where(AuditRun.dataset_id==dataset_id,AuditRun.status=='completed').order_by(AuditRun.created_at.desc()).limit(1))
     findings=db.scalars(select(Finding).where(Finding.audit_id==latest)).all() if latest else []
     if not findings:return {'strategies':[],'message':'Run an audit first.'}
@@ -230,25 +235,43 @@ def ranking_comparison(db,dataset_id,budget=15):
         if p.exists():
             import json
             truth=json.loads(p.read_text())
-    sample_ids={s.id:s.sample_id for s in db.scalars(select(Sample).where(Sample.dataset_id==dataset_id))}
+    sample_map={s.id:s for s in db.scalars(select(Sample).where(Sample.dataset_id==dataset_id))}
+    sample_ids={sid:s.sample_id for sid,s in sample_map.items()}
+    def stable(f):
+        return (f.kind,sample_ids.get(f.sample_id,''),sample_ids.get(f.linked_id,''),f.title)
     def correct(f):
         if truth is None:return None
         a=sample_ids.get(f.sample_id);b=sample_ids.get(f.linked_id)
-        pairs=[set(x) for x in truth.get('exact_duplicate',[])+truth.get('near_duplicate',[])]
+        declared_pairs=[set(x) for x in truth.get('exact_duplicate',[])+truth.get('near_duplicate',[])]
         if f.kind in ('split_leakage','near_duplicate','pixel_duplicate','exact_duplicate'):
-            return int({a,b} in pairs)
+            return int({a,b} in declared_pairs)
         if f.kind=='label_suspicion':return int(a in truth.get('label_flip',[]))
-        if f.kind=='group_overlap':return int(jl(f.evidence).get('group_id') in truth.get('group_overlap',[]))
+        if f.kind=='group_overlap':
+            ss=sample_map.get(f.sample_id)
+            return int(bool(ss and ss.group_id and len({x.split for x in sample_map.values() if x.group_id==ss.group_id and x.group_type==ss.group_type})>1))
         return 0
+    n=min(max(1,budget),len(findings))
+    def random_order(seed):
+        return sorted(findings,key=lambda f:(hashlib.sha256((str(seed)+'|'+repr(stable(f))).encode()).hexdigest(),stable(f)))
     ranked={
-      'IGAT (experimental)':sorted(findings,key=lambda f:(-f.priority,f.id)),
-      'Confidence':sorted(findings,key=lambda f:(-f.confidence,f.id)),
-      'Severity':sorted(findings,key=lambda f:(-SEVERITY[f.severity],f.id)),
-      'Random (seed 42)':sorted(findings,key=lambda f:hashlib.sha256(('42'+f.id).encode()).hexdigest()),
+      'IGAT (experimental)':sorted(findings,key=lambda f:(-f.priority,stable(f))),
+      'Confidence':sorted(findings,key=lambda f:(-f.confidence,stable(f))),
+      'Severity':sorted(findings,key=lambda f:(-SEVERITY[f.severity],stable(f))),
     }
-    budget=max(1,min(budget,len(findings)))
-    results=[]
+    strategies=[]
     for name,order in ranked.items():
-        top=order[:budget]
-        results.append({'name':name,'review_budget':budget,'confirmed_known_defects':sum(correct(f) for f in top) if truth is not None else None,'total_candidates':len(findings),'ranking_ids':[f.id for f in top]})
-    return {'strategies':results,'ground_truth_available':truth is not None,'caveat':'Only the deliberately injected synthetic truth is scored. This is a software sanity test, not a clinical validation or generalization claim.' if truth else 'Without independently confirmed ground truth, strategies cannot be scored for actual issue discovery.'}
+        total=sum(correct(f) for f in order[:n]) if truth is not None else None
+        strategies.append({'name':name,'review_budget':n,'confirmed_known_defects':total,
+                           'precision_at_budget':total/n if total is not None else None,
+                           'total_candidates':len(findings),'ranking_ids':[f.id for f in order[:n]]})
+    trials=[sum(correct(f) for f in random_order(seed)[:n]) for seed in range(42,72)] if truth is not None else []
+    rand=random_order(42)
+    strategies.append({'name':'Random (30 seeded trials)','review_budget':n,
+        'confirmed_known_defects':float(np.mean(trials)) if trials else None,
+        'precision_at_budget':float(np.mean(trials))/n if trials else None,
+        'trial_yield_95pct_interval':[float(np.quantile(trials,.025)),float(np.quantile(trials,.975))] if trials else None,
+        'trial_seeds':list(range(42,72)), 'total_candidates':len(findings),'ranking_ids':[f.id for f in rand[:n]]})
+    return {'strategies':strategies,'ground_truth_available':truth is not None,
+            'method':'All strategies rank identical candidates and use an equal number of reviews. Random baseline averages 30 fixed seeds.',
+            'caveat':('Only known, deliberately injected synthetic defects can be scored here; this is not an independent biomedical-label benchmark or an estimate of clinical usefulness.'
+                 if truth else 'Cannot compute fair issue yield without independently established reference truth for this dataset. Reviewer-accepted hypotheses are not automatically unbiased ground truth.')}

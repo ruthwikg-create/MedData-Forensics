@@ -1,3 +1,7 @@
+# Historical v0.8.0 release snapshot
+
+For the **current v0.9.0 acceptance assessment**, see [ACCEPTANCE_AUDIT.md](ACCEPTANCE_AUDIT.md). The historical checks below should not be interpreted as current research validation.
+
 # Release acceptance audit — 0.8.0 research build
 
 ## Functional verification

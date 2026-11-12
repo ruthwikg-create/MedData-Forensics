@@ -90,7 +90,7 @@ Does an evidence-supported, cost-aware prioritization method identify more **ind
 - Never use final test performance to optimize IGAT weights or candidate selection.
 - Detect content overlap between source and target before describing a study as external.
 - Use dataset- or patient-level bootstrap units where appropriate, not image-level independence assumptions when correlations exist.
-- Match algorithms on identical candidate sets and review budgets; random baseline across multiple seeds.
+- Match algorithms on identical candidate sets and review budgets; random baseline across 30 fixed seeds on synthetic known defects; real-data independent labels pending.
 - Define the review cost and what constitutes a *distinct consequential issue* **before** experiments.
 - Keep synthetic ground-truth injections out of any claims about spontaneous clinical annotation errors.
 
@@ -100,7 +100,7 @@ Does an evidence-supported, cost-aware prioritization method identify more **ind
 - Near duplicates: 64-bit pHash from DCT, 8-block locality-sensitive candidate retrieval, Hamming ≤7 and 96px SSIM ≥0.935, with candidate caps. Thresholds are illustrative; **not calibrated for biomedical datasets.**
 - Training-only label suspicion: cross-fitted logistic regression using HOG and 12×12 RGB pixel features; where present, group-aware folds. Cleanlab score integration is optional if installed; ordinary self-label probability is fallback.
 - Source-label association: prespecified chi-square test with Cramér's V when data meets minimal conditions; exploratory, not proof of shortcuts.
-- Model: LogisticRegression with `class_weight='balanced'`, fixed seed 42, CPU, held-out test evaluation, 150 naive bootstrap resamples (better group-aware bootstrap required for clustered real data).
+- Model: LogisticRegression with `class_weight='balanced'`, fixed seed 42, CPU, held-out test evaluation, 300 group-cluster bootstrap replicates where group IDs exist, with a hash-based fallback when absent; patient-level independence remains unproven without patient metadata.
 - IGAT demonstration ranks by fixed evidence, severity, sample connection frequency and review-cost scores; real impact estimates and weights still need validation.
 - Impact simulation: remove reviewer-confirmed training rows only, hold the test cohort fixed, compare trained models and preserve a child dataset version.
 - Cross-dataset lab rejects identical image hashes, declared modality mismatch and distinct class vocabulary, **but a full clinical mapping/adjudication remains an external research prerequisite**.

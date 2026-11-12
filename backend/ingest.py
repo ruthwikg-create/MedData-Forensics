@@ -81,7 +81,7 @@ def import_npz(path,name,source='MedMNIST',license='Check upstream source datase
             n=min(len(x),max_samples_per_split)
             arrays.append((split,x[:n].copy(),y[:n].reshape(-1).copy()))
             sizes[split]={'source_count':int(len(x)),'imported_count':n}
-            labels_seen.update(str(int(t)) for t in y[:n])
+            labels_seen.update(str(int(t)) for t in y[:n].reshape(-1))
     with Session() as db:
         d=_dataset(name,source,license,'Biomedical 2D image','MedMNIST-compatible NPZ import (bounded, no data downloaded automatically)',False,{'sampling':sizes,'subset':any(v['source_count']!=v['imported_count'] for v in sizes.values()),'label_ids':sorted(labels_seen)})
         db.add(d);db.flush()

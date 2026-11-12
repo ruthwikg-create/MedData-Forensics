@@ -12,7 +12,7 @@ from .db import Session,Dataset,Sample,Finding,Review,Experiment,ARTIFACT_ROOT,D
 from .analysis_engine import extract_features,DETECTOR_VERSION
 from .security import safe_path,sha_file,manifest_hash
 
-LAB_VERSION='labs-0.8.0'
+LAB_VERSION='labs-0.9.0'
 
 def _load(db,dataset_id):
     d=db.get(Dataset,dataset_id)
@@ -34,16 +34,83 @@ def _pred(model,samples):
     x=np.vstack([extract_features(safe_path(s.relpath)) for s in samples]);probs=model.predict_proba(x)
     return probs
 
+
+def _evaluation_integrity(train, validation, test):
+    """Retain only evaluation records whose available provenance does not overlap earlier splits.
+
+    This does not establish patient independence if trustworthy group metadata is absent.
+    Fail closed if no independent held-out test observations remain.
+    """
+    from .analysis_engine import pixel_fingerprint
+    ordered=list(train)+list(validation)+list(test)
+    tokens={}
+    for sample in ordered:
+        values=set()
+        if sample.group_id:
+            values.add(('group',sample.group_type or 'unspecified',sample.group_id))
+        if sample.sha256:values.add(('file_sha256',sample.sha256))
+        # Audit may not have run. Pixel hashes also catch identical images
+        # re-encoded with different file bytes.
+        px=sample.pixelhash or pixel_fingerprint(safe_path(sample.relpath))
+        values.add(('pixel_sha256',px))
+        tokens[sample.id]=values
+    occupied=set().union(*(tokens[x.id] for x in train)) if train else set()
+    keep_validation=[];excluded_validation=[]
+    for x in validation:
+        if tokens[x.id]&occupied:excluded_validation.append(x.sample_id)
+        else:keep_validation.append(x)
+    occupied|=set().union(*(tokens[x.id] for x in keep_validation)) if keep_validation else set()
+    keep_test=[];excluded_test=[]
+    for x in test:
+        if tokens[x.id]&occupied:excluded_test.append(x.sample_id)
+        else:keep_test.append(x)
+    if not keep_test:
+        raise ValueError('No leakage-screened independent test records remain; correct dataset partitions before evaluating')
+    meta={'method':'cross-split exact file hash, decoded-pixel hash and declared group identifiers',
+          'train_n':len(train),'validation_original_n':len(validation),'validation_retained_n':len(keep_validation),
+          'test_original_n':len(test),'test_retained_n':len(keep_test),
+          'excluded_validation_sample_ids':excluded_validation[:100],
+          'excluded_test_sample_ids':excluded_test[:100],
+          'excluded_validation_n':len(excluded_validation),'excluded_test_n':len(excluded_test),
+          'group_ids_missing_n':sum(not x.group_id for x in ordered),
+          'limitations':['Available metadata cannot establish patient independence when patient identifiers are absent.',
+             'Near duplicates and acquisition-level correlations may remain; run the forensic audit and document test-set provenance.',
+             'Leakage filtering was based solely on identity and recorded metadata, never test labels or performance.']}
+    return keep_validation,keep_test,meta
+
+
+def _cluster_bootstrap_metrics(y, pred, sample_rows, labels, seed=42, repetitions=300):
+    """Cluster-resample test observations by declared group when available."""
+    rng=np.random.default_rng(seed)
+    groups=defaultdict(list)
+    for i,s in enumerate(sample_rows):
+        key=('group',s.group_type or 'unspecified',s.group_id) if s.group_id else ('sha',s.sha256 or s.sample_id)
+        groups[key].append(i)
+    blocks=list(groups.values())
+    def calc(ix):
+        return (float(f1_score(y[ix],pred[ix],labels=labels,average='macro',zero_division=0)),
+                float(accuracy_score(y[ix],pred[ix])))
+    vals=[]
+    for _ in range(repetitions):
+        chosen=rng.integers(0,len(blocks),size=len(blocks))
+        ix=np.asarray([i for j in chosen for i in blocks[int(j)]],dtype=int)
+        vals.append(calc(ix))
+    series=np.asarray(vals)
+    def ci(j):return [float(np.quantile(series[:,j],.025)),float(np.quantile(series[:,j],.975))]
+    return {'macro_f1_ci95':ci(0),'accuracy_ci95':ci(1),
+            'bootstrap_method':'group-cluster percentile bootstrap (unique sample/file hashes when group ID absent)',
+            'bootstrap_resamples':repetitions,'bootstrap_clusters':len(blocks),
+            'limitations':['Coverage of nominal confidence intervals is not guaranteed on small or correlated samples.',
+                           'Unknown patient identity may mean the fallback clusters are not independent.']}
+
 def _score(model,rows,boot_seed=42):
     if not rows:return {'error':'No evaluation rows'}
     probs=_pred(model,rows);cl=model.classes_.tolist();pred=np.asarray([cl[int(np.argmax(p))] for p in probs]);y=np.asarray([s.label for s in rows])
     labels=sorted(set(cl)|set(y.tolist()))
     acc=float(accuracy_score(y,pred));balanced=float(balanced_accuracy_score(y,pred));macro=float(f1_score(y,pred,labels=labels,average='macro',zero_division=0))
     cm=confusion_matrix(y,pred,labels=labels).tolist()
-    np_rng=np.random.default_rng(boot_seed);boot=[]
-    for _ in range(150):
-        ix=np_rng.integers(0,len(rows),size=len(rows));boot.append(float(f1_score(y[ix],pred[ix],labels=labels,average='macro',zero_division=0)))
-    metrics={'accuracy':acc,'balanced_accuracy':balanced,'macro_f1':macro,'macro_f1_ci95':[float(np.quantile(boot,.025)),float(np.quantile(boot,.975))],'confusion_matrix':cm,'labels':labels,'n':len(rows)}
+    ci=_cluster_bootstrap_metrics(y,pred,rows,labels,seed=boot_seed)
+    metrics={'accuracy':acc,'balanced_accuracy':balanced,'macro_f1':macro,'confusion_matrix':cm,'labels':labels,'n':len(rows),**ci}
     metrics['per_class']=classification_report(y,pred,labels=labels,output_dict=True,zero_division=0)
     c=np.max(probs,axis=1);hit=(y==pred).astype('float32');calibration=[];ece=0.0
     for k in range(10):
@@ -95,10 +162,12 @@ def run_baseline(exp_id,progress=None):
         train=[s for s in samples if s.split=='train'];validation=[s for s in samples if s.split=='val'];test=[s for s in samples if s.split=='test']
         if not test:raise ValueError('Dataset needs a held-out test split')
         if progress:progress(15,'Extracting CPU-friendly HOG and color features')
+        safe_validation,safe_test,integrity=_evaluation_integrity(train,validation,test)
         model=_model(train,seed)
-        if progress:progress(63,'Evaluating fixed validation and test partitions')
-        outcome={'validation':_score(model,validation,seed) if validation else None,'test':_score(model,test,seed),
-           'data_quality_warnings':_check_group_leakage(samples),'train_n':len(train),'test_n':len(test),'validation_n':len(validation),
+        if progress:progress(63,'Evaluating only provenance-screened validation and test partitions')
+        outcome={'validation':_score(model,safe_validation,seed) if safe_validation else None,'test':_score(model,safe_test,seed),
+           'data_quality_warnings':_check_group_leakage(samples),'evaluation_integrity':integrity,
+           'train_n':len(train),'test_n':len(safe_test),'validation_n':len(safe_validation),
            'method':'Logistic regression on HOG + downsized RGB; no GPU, no diagnostic claims','baseline':True}
         manifest=_manifest(d,config,seed);manifest['group_overlap_warning']=bool(outcome['data_quality_warnings']);_save_model(model,e.id,manifest)
         outcome['manifest']=manifest
@@ -212,10 +281,26 @@ def run_impact(exp_id,progress=None):
         if not exclusions:raise ValueError('No confirmed training-sample findings. Review and confirm a supported issue first.')
         curated=[s for s in train if s.id not in exclusions]
         if len(curated)<20 or len(set(x.label for x in curated))<2:raise ValueError('Exclusions leave too few training examples')
+        validation=[s for s in samples if s.split=='val']
+        _,safe_test,integrity=_evaluation_integrity(train,validation,test)
         if progress:progress(18,'Training original baseline on fixed training split')
-        m0=_model(train,42);first=_score(m0,test,42)
+        m0=_model(train,42);first=_score(m0,safe_test,42)
         if progress:progress(60,'Training removal-only ablation on curated training split')
-        m1=_model(curated,42);second=_score(m1,test,42)
+        m1=_model(curated,42);second=_score(m1,safe_test,42)
+        # Paired resampling preserves correlations between the two predictions.
+        y=np.asarray([s.label for s in safe_test]);labs=sorted(set(y.tolist())|set(m0.classes_.tolist())|set(m1.classes_.tolist()))
+        p0=np.asarray([m0.classes_[int(np.argmax(p))] for p in _pred(m0,safe_test)])
+        p1=np.asarray([m1.classes_[int(np.argmax(p))] for p in _pred(m1,safe_test)])
+        grouped=defaultdict(list)
+        for i,sample in enumerate(safe_test):
+            key=('group',sample.group_type or 'unspecified',sample.group_id) if sample.group_id else ('sha',sample.sha256 or sample.sample_id)
+            grouped[key].append(i)
+        blocks=list(grouped.values());rng=np.random.default_rng(42);deltas=[]
+        for _ in range(300):
+            selection=rng.integers(0,len(blocks),size=len(blocks))
+            ix=np.asarray([i for j in selection for i in blocks[int(j)]],dtype=int)
+            deltas.append(float(f1_score(y[ix],p1[ix],labels=labs,average='macro',zero_division=0)-f1_score(y[ix],p0[ix],labels=labs,average='macro',zero_division=0)))
+        delta_ci=[float(np.quantile(deltas,.025)),float(np.quantile(deltas,.975))]
         # Persist an immutable derived metadata version; source images remain in place.
         version=Dataset(name=(d.name+' · reviewed exclusion')[:200],source='Derived reviewer-confirmed training exclusion',source_url=d.source_url,license=d.license,
           modality=d.modality,description='Research-only immutable removal ablation version; labels and pixels unchanged.',synthetic=d.synthetic,parent_id=d.id,
@@ -229,7 +314,8 @@ def run_impact(exp_id,progress=None):
                meta=jd({'derived_from_sample_id':s.id,'remediation':'excluded confirmed training concern'})))
         db.add_all(new_samples);version.manifest_hash=manifest_hash(new_samples)
         output={'derived_dataset_id':version.id,'removed_train_sample_ids':sorted(exclusions),'removed_count':len(exclusions),'original_train_n':len(train),'curated_train_n':len(curated),
-           'evaluation_test_ids_sha256':hashlib.sha256('|'.join(sorted(x.sample_id for x in test)).encode()).hexdigest(),
+           'evaluation_test_ids_sha256':hashlib.sha256('|'.join(sorted(x.sample_id for x in safe_test)).encode()).hexdigest(),
+           'evaluation_integrity':integrity,'paired_macro_f1_delta_ci95':delta_ci,
            'before':first['metrics'],'after':second['metrics'],
            'macro_f1_delta':second['metrics']['macro_f1']-first['metrics']['macro_f1'],
            'manifest':_manifest(d,cfg,42),

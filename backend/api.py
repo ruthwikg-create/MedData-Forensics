@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel,Field
 from sqlalchemy import select,func
 from .db import Session,DATA_ROOT,ARTIFACT_ROOT,Dataset,Sample,Finding,Review,AuditRun,Experiment,Job,jd,jl,now
-from .security import safe_path,extract_auth,MAX_ARCHIVE_BYTES
+from .security import safe_path,extract_auth,MAX_ARCHIVE_BYTES,sha_file,manifest_hash
 from .ingest import demo_dataset,import_zip,import_npz
 from .analysis_engine import forensic_graph,ranking_comparison
 from .labs import EXPERIMENT_RUNNERS
@@ -29,7 +29,7 @@ async def lifespan(app):
     yield
     stop.set()
     if thread:thread.join(timeout=3)
-app=FastAPI(title='MedData Forensics',version='0.8.1-research',lifespan=lifespan,docs_url='/api/docs',openapi_url='/api/openapi.json')
+app=FastAPI(title='MedData Forensics',version='0.9.0-research',lifespan=lifespan,docs_url='/api/docs',openapi_url='/api/openapi.json')
 
 @app.middleware('http')
 async def security_middleware(request,call_next):
@@ -55,7 +55,7 @@ class ExperimentInput(BaseModel):
     config:dict=Field(default_factory=dict)
 
 
-def stamp(dt):return dt.isoformat()+'Z' if dt else None
+def stamp(dt):return dt.astimezone(timezone.utc).isoformat().replace('+00:00','Z') if dt and dt.tzinfo else (dt.isoformat()+'Z' if dt else None)
 
 def sample_out(s):
     return {'id':s.id,'sample_id':s.sample_id,'label':s.label,'split':s.split,'group_id':s.group_id,'group_type':s.group_type,
@@ -94,7 +94,7 @@ def authorize_session(request:Request):
 
 @app.get('/api/health')
 def health():
-    return {'status':'ok','version':'0.8.0-research','analysis':'local research only','worker_enabled':os.getenv('MDF_NO_AUTOWORKER','0')!='1','storage':str(DATA_ROOT)}
+    return {'status':'ok','version':'0.9.0-research','analysis':'local research only','worker_enabled':os.getenv('MDF_NO_AUTOWORKER','0')!='1','storage':str(DATA_ROOT)}
 
 @app.get('/api/overview')
 def overview():
@@ -169,6 +169,33 @@ def dataset_dna(did:str):
           'image_shapes':dict(Counter(f'{s.width}×{s.height}' if s.width and s.height else 'unknown' for s in rows)),
           'group_coverage':{'with_group_id':sum(bool(s.group_id) for s in rows),'without_group_id':sum(not s.group_id for s in rows)},
           'source_notes':'Identifiers are interpreted only according to the dataset provider. Lesion IDs are not patient IDs.'}
+
+@app.get('/api/datasets/{did}/verify')
+def verify_dataset_integrity(did:str):
+    """Read-only verification against import-time manifest and recorded file hashes."""
+    with Session() as db:
+        d=get_dataset(db,did)
+        samples=db.scalars(select(Sample).where(Sample.dataset_id==did).order_by(Sample.sample_id)).all()
+        problems=[]
+        for s in samples:
+            try:
+                p=safe_path(s.relpath)
+                if not p.is_file():
+                    problems.append({'sample_id':s.sample_id,'kind':'missing_file'})
+                elif not s.sha256:
+                    problems.append({'sample_id':s.sample_id,'kind':'missing_recorded_hash'})
+                elif sha_file(p)!=s.sha256:
+                    problems.append({'sample_id':s.sample_id,'kind':'changed_file_hash'})
+            except (ValueError,OSError):
+                problems.append({'sample_id':s.sample_id,'kind':'unreadable_or_unsafe_path'})
+        computed=manifest_hash(samples)
+        if computed!=d.manifest_hash:
+            problems.append({'kind':'dataset_manifest_mismatch','recorded':d.manifest_hash,'computed':computed})
+        return {'dataset_id':did,'passed':not problems,'checked_files':len(samples),
+                'recorded_manifest_sha256':d.manifest_hash,'computed_manifest_sha256':computed,
+                'problems':problems[:100], 'problem_count':len(problems),
+                'limits':['File hashes and recorded metadata are verified; upstream medical labels and copyright authorization are not independently verified.',
+                          'An already compromised reference manifest cannot be independently trusted without an externally preserved signed manifest.']}
 
 @app.get('/api/datasets/{did}/samples')
 def dataset_samples(did:str,page:int=Query(1,ge=1),size:int=Query(24,ge=1,le=100),split:str='',label:str='',search:str=''):
@@ -313,6 +340,24 @@ def download_report(did:str,format:str='json'):
            'limitations':['Automated flags are investigative hypotheses, not clinical ground truth.','Group overlap requires documented group-identifier semantics.','Benchmarks using synthetic defects do not establish performance on natural medical data.'],
            'methods':'SHA256/pixel hashing, perceptual hash+SSIM, source association, OOF label suspicion, bounded CPU model evaluations',
            'claim':'No clinical or external validation has been performed by this product.'}
+        if format=='repro':
+            samples=db.scalars(select(Sample).where(Sample.dataset_id==did).order_by(Sample.sample_id)).all()
+            audits=db.scalars(select(AuditRun).where(AuditRun.dataset_id==did).order_by(AuditRun.created_at)).all()
+            verification=verify_dataset_integrity(did)
+            content['reproducibility_bundle']={
+                'format_version':'1.0','verification':verification,
+                'sample_manifest':[{'sample_id':s.sample_id,'label':s.label,'split':s.split,
+                                    'group_id':s.group_id,'group_type':s.group_type,'sha256':s.sha256}
+                                   for s in samples],
+                'audit_configurations':[{'audit_id':a.id,'status':a.status,'config':jl(a.config)} for a in audits],
+                'source_license_disclosure':d.license,
+                'export_omits_images_and_model_binaries':True,
+                'limitations':['This is a metadata/evidence bundle, not a self-contained replica of original datasets.',
+                               'Reproducing model calculations requires original authorized data and matching dependencies.',
+                               'Group identifiers can be sensitive; review exports before sharing.']}
+            fname='MedData_Forensics_'+did
+            return Response(json.dumps(content,indent=2,default=str),media_type='application/json',
+                            headers={'Content-Disposition':f'attachment; filename={fname}_repro.json'})
         fname='MedData_Forensics_'+did
         if format=='json':return Response(json.dumps(content,indent=2,default=str),media_type='application/json',headers={'Content-Disposition':f'attachment; filename={fname}.json'})
         if format=='csv':
@@ -324,7 +369,7 @@ def download_report(did:str,format:str='json'):
             details=''.join(f'<tr><td>{esc(f.kind)}</td><td>{esc(f.title)}</td><td>{esc(f.status)}</td><td>{f.confidence:.2f}</td></tr>' for f in rows)
             page=f'''<!doctype html><html lang="en"><meta charset="utf-8"><title>Research audit {esc(d.name)}</title><style>body{{font:16px system-ui;max-width:920px;margin:50px auto;color:#17262f;padding:24px}}th,td{{border-bottom:1px solid #ddd;text-align:left;padding:10px}}table{{width:100%}}small{{color:#596c74}}</style><h1>MedData Forensics — research audit</h1><p><b>{esc(d.name)}</b> · {esc(d.source)} · {esc(d.license)}</p><p>Manifest SHA256: <code>{esc(d.manifest_hash)}</code></p><h2>Investigative findings ({len(rows)})</h2><table><tr><th>Type</th><th>Observation</th><th>Review status</th><th>Confidence</th></tr>{details}</table><h2>Interpretation limits</h2><p>Automated flags are hypotheses for review. This report does not validate medical diagnoses, clinical performance or regulatory compliance.</p><small>Generated {esc(now().isoformat())}</small></html>'''
             return Response(page,media_type='text/html',headers={'Content-Disposition':f'attachment; filename={fname}.html'})
-        raise HTTPException(400,'format must be json, csv, html')
+        raise HTTPException(400,'format must be json, csv, html, repro')
 
 @app.get('/api/privacy')
 def privacy():

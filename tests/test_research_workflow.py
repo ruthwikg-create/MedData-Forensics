@@ -83,7 +83,6 @@ def test_baseline_and_all_labs(client,sandbox):
         r=client.get(f'/api/datasets/{sandbox}/report?format={fmt}')
         assert r.status_code==200 and 'attachment' in r.headers['content-disposition']
     assert client.get('/artifacts/'+scenario['result']['truth_artifact']).status_code==200
-    return derived
 
 def test_cross_dataset(client,sandbox):
     source=client.post(f'/api/datasets/{sandbox}/experiments',json={'kind':'baseline','config':{}}).json()

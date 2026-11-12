@@ -4,7 +4,10 @@
 
 > **RESEARCH ONLY.** This software does not diagnose patients, establish image-label truth, certify a medical device, validate a model for clinical use, or establish a dataset's clinical suitability. All new/demo test results refer only to synthetic geometric phantoms unless a dataset is explicitly identified as an independently sourced research dataset. No real-world model validation or accepted research-paper contribution is claimed.
 
+**Current release: v0.9.0 research acceptance hardening.**
+
 MedData Forensics imports image classification datasets, identifies potential data-integrity risks with inspectable evidence, lets researchers review findings, and runs CPU-friendly comparative experiments. Every original dataset remains unchanged. No medical equipment, CUDA GPU, Docker or paid API required.
+
 
 ## Distinct research workspaces without a dataset
 
@@ -173,3 +176,22 @@ The frontend routing regression suite runs without installing JavaScript package
 ```powershell
 node --test tests/test_frontend_routes.cjs
 ```
+
+## Acceptance gate: verification added in v0.9.0
+
+The ten final acceptance criteria are tracked explicitly in [docs/ACCEPTANCE_AUDIT.md](docs/ACCEPTANCE_AUDIT.md). Passing software tests does **not** establish real biomedical model validity.
+
+- **Data integrity:** `GET /api/datasets/{dataset_id}/verify` re-hashes local images and verifies stored dataset manifest. Available as a button in the Reproducibility Engine.
+- **Reproducibility export:** Download `GET /api/datasets/{dataset_id}/report?format=repro` to obtain sample hashes, audit configurations, evidence, reviews and experiment manifests. This metadata bundle excludes raw images and model binaries.
+- **Leakage safeguards:** baseline and impact evaluations screen test/validation partitions against earlier splits using available group IDs, file hashes and decoded-pixel hashes. Records removed from evaluation are explicitly listed. Missing patient IDs cannot be corrected automatically.
+- **Uncertainty:** subgroup-cluster bootstrap summaries and paired impact delta intervals are included. Small samples or missing grouping constrain interpretation.
+- **IGAT ranking:** equal-budget heuristic comparison plus 30 seeded random-baseline trials on known synthetic defects. No claim of superiority or real-world generalizability.
+- **Real-data verification:** `scripts/Run-RealDataset-Sanity.ps1` fetches official CC BY 4.0 PneumoniaMNIST (28x28) from MedMNIST's sole official distribution Zenodo, verifies MD5, and runs a CPU smoke test. It has **not** been run in the assistant's internet-restricted environment. Data is never bundled with this repository.
+
+### Windows acceptance tests
+
+```powershell
+.\scripts\Test-Windows.ps1
+```
+
+The Windows script checks Python backend tests and, when Node.js is installed, frontend routing tests. For a real-data smoke test use `scripts/Run-RealDataset-Sanity.ps1` after reviewing the data license. Do not treat successfully opening the app as proof that all research validation criteria are met.
