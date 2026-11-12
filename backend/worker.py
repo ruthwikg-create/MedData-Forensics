@@ -1,6 +1,6 @@
 """Persistent database-backed local worker; designed for one CPU task at a time."""
 from __future__ import annotations
-import threading,time,traceback
+import threading,time,logging
 from datetime import timedelta
 from sqlalchemy import select
 from .db import Session,Job,AuditRun,Experiment,now
@@ -10,11 +10,19 @@ from .labs import EXPERIMENT_RUNNERS
 class Cancelled(Exception):pass
 
 def recover_jobs():
+    """On a single-workstation restart, no previous in-process job can still run.
+
+    Recover all interrupted running jobs, not only those older than ten minutes.
+    Otherwise a quick restart leaves jobs stuck forever in 'running'.
+    """
     with Session() as db:
         stale=db.scalars(select(Job).where(Job.status=='running')).all()
         for j in stale:
-            if not j.updated_at or (now().replace(tzinfo=None)-j.updated_at.replace(tzinfo=None)).total_seconds()>600:
-                j.status='queued';j.message='Recovered an interrupted job'
+            j.status='queued';j.progress=0;j.error=None
+            j.message='Requeued after a previous worker stopped'
+            j.updated_at=now()
+            item=db.get(AuditRun,j.target_id) if j.kind=='audit' else db.get(Experiment,j.target_id)
+            if item:item.status='queued';item.finished_at=None
         db.commit()
 
 def run_one():
@@ -70,6 +78,7 @@ def loop(stop=None,delay=.8):
     while stop is None or not stop.is_set():
         try:busy=run_one()
         except Exception:
+            logging.exception('MedData background worker encountered an unexpected loop error')
             busy=False
         if not busy:
             if stop is not None:stop.wait(delay)
