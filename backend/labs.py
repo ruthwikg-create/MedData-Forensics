@@ -79,12 +79,16 @@ def baseline_readiness(db,dataset_id):
     # screened during training and can still make a dataset ineligible.
     prior={(s.sha256,'sha') for s in train if s.sha256}
     prior.update((s.group_type or 'unspecified',s.group_id) for s in train if s.group_id)
-    overlaps=sum(bool(({(s.sha256,'sha')} if s.sha256 else set()) |
-                       ({(s.group_type or 'unspecified',s.group_id)} if s.group_id else set())) and
-                 bool((({(s.sha256,'sha')} if s.sha256 else set()) |
-                       ({(s.group_type or 'unspecified',s.group_id)} if s.group_id else set())) & prior)
-                 for s in test)
-    if overlaps:warnings.append(str(overlaps)+' test record(s) share a file hash or declared group with training and may be excluded.')
+    overlaps=0
+    for sample in test:
+        identifiers=set()
+        if sample.sha256:identifiers.add((sample.sha256,'sha'))
+        if sample.group_id:identifiers.add((sample.group_type or 'unspecified',sample.group_id))
+        if identifiers & prior:overlaps+=1
+    if overlaps:
+        warnings.append(str(overlaps)+' test record(s) share a file hash or declared group with training and may be excluded.')
+    if test and overlaps==len(test):
+        errors.append('All test records match training file hashes or groups; provide a genuinely held-out test split.')
     if not all(s.group_id for s in rows):warnings.append('Missing group identifiers prevent verification of patient-level independence.')
     if len(train)>2400:warnings.append('CPU training samples at most 2,400 images using a seeded class-aware selection.')
     return {'ready':not errors,'errors':errors,'warnings':warnings,
