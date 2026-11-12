@@ -190,8 +190,17 @@ function renderGraph(){
  const status=g.audit_completed?(g.finding_count?`Connected evidence from ${number(g.finding_count)} ranked findings`:'Audit completed; no linked findings detected'):'No completed audit yet';
  html+=notice(g.note||'Graph links are detector observations, not proof of shared patient identity.',g.audit_completed?'':'warn');
  html+=`<div class="card card-padded"><div class="card-title"><h3>${esc(status)}</h3><div class="graph-legend"><span class="legend-item"><span class="legend-dot"></span>Image record</span><span class="legend-item"><span class="legend-dot blue"></span>Finding</span></div></div>`;
- if(g.nodes?.length){
-  html+=`<div id="nodeGraph" class="node-graph" role="region" aria-label="Audited evidence network"></div><p class="fine" style="margin-top:12px">${number(g.nodes.length)} real nodes, ${number(g.edges.length)} evidenced links. Select a labelled record or finding to inspect it. ${g.truncated?'Showing a priority-ranked subset of findings.':''}</p>`;
+ if(g.nodes?.length&&g.edges?.length){
+  html+=`<div class="graph-scroll-hint" aria-hidden="true">Scroll horizontally to explore connected records on smaller screens</div><div id="nodeGraph" class="node-graph" role="region" tabindex="0" aria-label="Audited evidence network; scroll to explore nodes"></div><p class="fine" style="margin-top:12px">${number(g.nodes.length)} real nodes, ${number(g.edges.length)} detector-evidence links. Select a labelled record or finding to inspect it. ${g.truncated?'Showing a priority-ranked subset of findings.':''}</p>`;
+ }else if(g.nodes?.length){
+   const sampleRows=g.nodes.filter(n=>n.type==='sample').slice(0,12);
+   const globalFindings=g.nodes.filter(n=>n.type==='finding').slice(0,12);
+   const sampleList=sampleRows.map(n=>'<button type="button" class="graph-list-item" data-sample="'+esc(n.id.slice(2))+'"><span>'+esc(n.label)+' · '+esc(n.split||'image')+'</span>'+icon('arrow')+'</button>').join('');
+   const findingList=globalFindings.map(n=>'<button type="button" class="graph-list-item" data-finding="'+esc(n.id.slice(2))+'"><span>'+esc(n.label)+' · '+esc(n.status||'suspected')+'</span>'+icon('arrow')+'</button>').join('');
+   html+=card('No detector-linked image relationships',
+     '<p class="fine" style="margin-bottom:16px">The current audit has not produced sample-to-finding connections. A line-only graph would be misleading; inspect the actual records below or run a new audit. Dataset-wide findings without image links are listed separately.</p>'+
+     '<div class="graph-empty-grid"><section><h4>Source image records</h4>'+(sampleList||'<p class="fine">No individual sample nodes in this graph response.</p>')+'</section>'+
+     '<section><h4>Dataset-wide findings</h4>'+(findingList||'<p class="fine">No dataset-wide finding nodes.</p>')+'</section></div>');
  }else html+=empty('No source records available','Import research images and run an audit to discover evidence links.',btn('Import dataset','import'));
  html+='</div>';
  if(!g.audit_completed)html+=`<div class="module-next" style="margin-top:20px"><div><strong>Generate the first evidence network</strong><p>Run the audit. The network will only draw links supported by detector findings.</p></div>${btn(icon('play')+' Run forensic audit','run-audit','btn-primary')}</div>`;
@@ -305,23 +314,24 @@ function navigate(view){state.view=RENDER[view]?view:'overview';window.location.
 async function changeDataset(did){state.did=did;storage.set('localStorage','mdf-dataset',did);state.activeFilters={kind:'',status:''};state.samplePage=1;state.findingPage=1;await refresh(true);toast('Research dataset selected.');}
 function drawGraph(graph){
  const box=$('#nodeGraph');if(!box)return;
- const fs=graph.nodes.filter(n=>n.type==='finding').slice(0,12);
+ const connectedFindingIds=new Set((graph.edges||[]).map(e=>e.source));
+ const fs=graph.nodes.filter(n=>n.type==='finding'&&connectedFindingIds.has(n.id)).slice(0,10);
  const fids=new Set(fs.map(n=>n.id));
  const referenced=new Set(graph.edges.filter(e=>fids.has(e.source)).map(e=>e.target));
- const samples=graph.nodes.filter(n=>n.type==='sample'&&(fs.length===0||referenced.has(n.id))).slice(0,18);
- const nodes=[...fs,...samples];if(!nodes.length)return;
- const height=Math.max(340,Math.max(fs.length,samples.length)*58+75),width=950;
- const pos={};const place=(items,x)=>items.forEach((n,i)=>{pos[n.id]={x,y:45+(i+.5)*(height-90)/Math.max(1,items.length)}});
+ const samples=graph.nodes.filter(n=>n.type==='sample'&&referenced.has(n.id)).slice(0,18);
+ const nodes=[...fs,...samples];if(!nodes.length){box.innerHTML='<p class="fine graph-empty-note" role="status">No connected evidence nodes were returned. Inspect the image inventory or run a forensic audit.</p>';return;}
+ const height=Math.max(340,Math.max(fs.length,samples.length)*66+95),width=950;
+ const pos={};const place=(items,x)=>items.forEach((n,i)=>{pos[n.id]={x,y:52+(i+.5)*(height-110)/Math.max(1,items.length)}});
  place(samples,210);place(fs,720);
  const edge=graph.edges.filter(e=>pos[e.source]&&pos[e.target]).map(e=>{
-  const a=pos[e.source.startsWith('s:')?e.source:e.target],b=pos[e.source.startsWith('f:')?e.source:e.target];return `<path d="M${a.x+112},${a.y} C${a.x+290},${a.y} ${b.x-275},${b.y} ${b.x-112},${b.y}" fill="none" stroke="var(--teal)" stroke-opacity=".45" stroke-width="2"/>`;
+  const a=pos[e.source.startsWith('s:')?e.source:e.target],b=pos[e.source.startsWith('f:')?e.source:e.target];return `<path d="M${a.x+112},${a.y} C${a.x+290},${a.y} ${b.x-275},${b.y} ${b.x-112},${b.y}" fill="none" stroke="var(--teal)" stroke-opacity=".8" stroke-width="2.5"/>`;
  }).join('');
  const cards=nodes.map(n=>{const p=pos[n.id],isFinding=n.type==='finding';const sub=isFinding?(n.status||'suspected').toUpperCase():(n.split||'image').toUpperCase();
   const label=n.label.length>30?n.label.slice(0,29)+'…':n.label;
   return `<g tabindex="0" role="button" data-node="${esc(n.id)}" aria-label="Inspect ${esc(n.label)}" class="graph-card" transform="translate(${p.x-112},${p.y-24})"><rect width="224" height="48" rx="9" class="graph-card-bg ${isFinding?'graph-card-finding':''}"/><rect width="5" height="30" x="11" y="9" rx="2.5" fill="${isFinding?'#4779b6':'#237568'}"/><text class="graph-label" x="23" y="21">${esc(label)}</text><text class="graph-caption" x="23" y="36">${esc(sub)}</text><title>${esc(n.label)}</title></g>`;
  }).join('');
  const description=fs.length?`<text x="610" y="24" class="graph-col-title">FORENSIC FINDINGS</text>`:`<text x="510" y="24" class="graph-col-title">NO AUDITED EVIDENCE YET</text>`;
- box.innerHTML=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" style="min-height:${Math.max(350,Math.min(600,height))}px" role="img" aria-label="${fs.length?'Connected findings and sample records':'Real image sample inventory with no reported links'}"><text x="100" y="24" class="graph-col-title">SOURCE IMAGE RECORDS</text>${description}<g>${edge}</g><g>${cards}</g></svg>`;
+ box.innerHTML=`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="group" aria-label="Detector-linked findings and source image records"><title>Forensic evidence connections</title><text x="100" y="24" class="graph-col-title">SOURCE IMAGE RECORDS</text>${description}<g>${edge}</g><g>${cards}</g></svg>`;
  box.querySelectorAll('[data-node]').forEach(el=>{const open=()=>{const id=el.dataset.node;if(id.startsWith('f:'))openFinding(id.slice(2));else openSample(id.slice(2))};el.addEventListener('click',open);el.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();open()}})});
 }
 
