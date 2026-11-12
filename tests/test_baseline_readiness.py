@@ -67,3 +67,27 @@ def test_capped_training_keeps_minority_class(monkeypatch):
     monkeypatch.setattr(labs,'extract_features',fake_extract)
     model=labs._model(rows,seed=42,max_train=20)
     assert set(model.classes_)=={'a','b'}
+
+
+def test_worker_requeues_recently_interrupted_jobs_without_waiting_ten_minutes():
+    from backend.db import Experiment, Job
+    from backend.worker import recover_jobs
+    with TestClient(app) as client:
+        did=client.post('/api/datasets/demo',json={'count':40,'seed':324}).json()['dataset_id']
+    with Session() as db:
+        experiment=Experiment(dataset_id=did,kind='baseline',status='running')
+        db.add(experiment)
+        db.flush()
+        job=Job(target_id=experiment.id,kind='baseline',status='running',progress=35)
+        db.add(job)
+        db.commit()
+        jid,eid=job.id,experiment.id
+    recover_jobs()
+    with Session() as db:
+        job=db.get(Job,jid)
+        experiment=db.get(Experiment,eid)
+        assert job.status=='queued' and job.progress==0
+        assert experiment.status=='queued'
+        db.delete(job)
+        db.delete(experiment)
+        db.commit()
