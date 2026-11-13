@@ -315,18 +315,80 @@ function renderImpact(){
  esc(r.evaluation_test_ids_sha256)+'</dd></div></dl>');
 }
 
-function renderFailures(){let html=head('PERFORMANCE INVESTIGATION','Model Failure Explorer','Inspect prediction mistakes, confusion matrices, uncertainty and performance across recorded source groups.',btn(icon('play')+' Run baseline','baseline-launch','btn-primary'));
+function renderConfusionMatrix(metrics){
+ const cm=metrics.confusion_matrix||[];
+ const labels=metrics.labels||[];
+ if(!cm.length||!labels.length)return '<p class="fine">No confusion matrix was reported for this experiment.</p>';
+ const maximum=Math.max(1,...cm.flat());
+ const header='<thead><tr><th scope="col" class="cm-axis">Actual ↓<span>Predicted →</span></th>'+
+  labels.map((label,index)=>'<th scope="col" title="Predicted class '+esc(label)+'">'+esc(label)+'</th>').join('')+'</tr></thead>';
+ const body=cm.map((row,rowIndex)=>{
+  const count=row.reduce((a,b)=>a+Number(b||0),0);
+  const cells=labels.map((label,columnIndex)=>{
+   const value=Number(row[columnIndex]||0),diagonal=rowIndex===columnIndex;
+   const opacity=(.045+.55*Math.sqrt(value/maximum)).toFixed(3);
+   return '<td class="cm-table-cell'+(diagonal?' cm-diagonal':'')+'" style="--cm-opacity:'+opacity+'"'+
+    ' title="Actual '+esc(labels[rowIndex])+', predicted '+esc(label)+': '+number(value)+' samples">'+
+    '<span>'+number(value)+'</span></td>';
+  }).join('');
+  return '<tr><th scope="row" title="Actual class '+esc(labels[rowIndex])+'">'+esc(labels[rowIndex])+
+   '</th>'+cells+'<td class="cm-total">'+number(count)+'</td></tr>';
+ }).join('');
+ return '<div class="cm-table-viewport" role="region" tabindex="0" aria-label="Scrollable confusion matrix">'+
+  '<table class="cm-table"><caption>Held-out test set · '+number(labels.length)+' classes · rows are actual labels, columns are predictions.</caption>'+
+  header.replace('</tr></thead>','<th scope="col" class="cm-total">Row total</th></tr></thead>')+
+  '<tbody>'+body+'</tbody></table></div>'+
+  '<p class="fine" style="margin-top:10px">Diagonal cells are correct classifications; all other cells are disagreements with the recorded research labels. Stronger shading indicates more images, not clinical severity.</p>';
+}
+function renderSiteBreakdown(subgroups){
+ const values=subgroups||[],known=values.filter(group=>group.name&&group.name!=='unknown');
+ const missing=values.filter(group=>!group.name||group.name==='unknown')
+  .reduce((sum,group)=>sum+Number(group.n||0),0);
+ if(!known.length)return '<div class="missing-site"><strong>No site-level comparison available</strong>'+
+  '<p>'+number(missing)+' evaluated images have no recorded source-site ID. The source label "unknown" is missing metadata, not a clinical site. No site-level accuracy or fairness conclusion can be calculated from this dataset.</p></div>';
+ return '<div class="data-list">'+known.map(group=>'<div class="data-row"><div><div class="row-label">'+esc(group.name)+'</div>'+
+  '<div class="row-desc">'+number(group.n)+' images · '+esc(group.note||'Exploratory subset')+'</div></div>'+
+  '<strong>'+(group.metric==null?'Insufficient data':pct(group.metric))+'</strong></div>').join('')+
+  '</div><p class="fine" style="margin-top:12px">'+(missing?number(missing)+' images omitted because site ID is missing. ':'')+
+  'These are descriptive site subsets only, not a fairness or clinical validation result.</p>';
+}
+function renderFailures(){
+ let html=head('PERFORMANCE INVESTIGATION','Model Failure Explorer',
+  'Inspect held-out classification errors, class performance, uncertainty and recorded acquisition sites.',
+  btn(icon('play')+' Run baseline','baseline-launch','btn-primary'));
  if(!state.detail)return html+needDataset();
- const e=bestExp('baseline');if(!e){const failed=state.detail?.experiments?.some(x=>x.kind==='baseline'&&x.status==='failed');return html+(failed?notice('The last baseline model failed. Open Analysis Jobs to read the error, then select Run baseline to retry after updating the software.','warn'):'')+empty('No completed model evaluation yet','Train the CPU baseline to examine test-split misclassifications. For failed attempts, use Analysis Jobs to review the exact error.',btn('Train baseline model','baseline-launch','btn-primary')+' '+btn('View failed jobs','jobs'));}
- const r=e.result.test||{},m=r.metrics||{},errors=(r.predictions||[]).filter(x=>!x.correct);
- html+=notice('These are research-label disagreements from a lightweight model. Misclassification is not a verified clinical diagnosis error.');
- html+=`<div class="stats-row">${stat('Test macro-F1',metric(m.macro_f1),'Bootstrap interval: '+((m.macro_f1_ci95||[]).map(metric).join(' to ')||'n/a'))}${stat('Balanced accuracy',metric(m.balanced_accuracy),'Class-balanced test metric')}${stat('Test errors',number(errors.length),'Disagreements with supplied labels')}${stat('Calibration error',metric(m.expected_calibration_error),'Exploratory ECE; lower is better')}</div>`;
- const cm=m.confusion_matrix||[];let mat='';if(cm.length){const mx=Math.max(1,...cm.flat());mat=`<div class="cm-grid" style="grid-template-columns:repeat(${cm.length},minmax(0,1fr))">${cm.flatMap((row,i)=>row.map((v,j)=>`<div class="cm-cell" title="Actual ${esc(m.labels[i])}; Predicted ${esc(m.labels[j])}" style="background:rgba(33,117,104,${(.08+.65*v/mx).toFixed(2)})">${number(v)}<small>${i===j?'correct':'error'}</small></div>`)).join('')}</div><p class="fine" style="margin-top:13px">Rows: actual labels · columns: predicted labels. ${esc((m.labels||[]).join(' · '))}</p>`;}
- html+=`<div class="two-col equal">${card('Confusion matrix',mat||'<p>No confusion matrix reported.</p>')}${card('Performance by recorded site',`<div class="data-list">${(r.subgroups||[]).map(s=>`<div class="data-row"><div><div class="row-label">${esc(s.name)}</div><div class="row-desc">${s.n} samples</div></div><strong>${s.metric==null?'Insufficient data':pct(s.metric)}</strong></div>`).join('')}</div><p class="fine" style="margin-top:12px">Exploratory subgroup metrics only; no fairness conclusion.</p>`)}</div>`;
- html+=`<div class="two-col equal section-gap">${card('Per-class performance',`<div class="table-wrap"><table><thead><tr><th>Recorded class</th><th>Precision</th><th>Recall</th><th>F1</th><th>N</th></tr></thead><tbody>${(m.labels||[]).map(l=>{const x=m.per_class?.[l]||{};return `<tr><td>${esc(l)}</td><td>${metric(x.precision)}</td><td>${metric(x.recall)}</td><td>${metric(x['f1-score'])}</td><td>${number(x.support)}</td></tr>`}).join('')}</tbody></table></div>`)}${card('Calibration by confidence',`<p class="fine" style="margin-bottom:12px">Empirical accuracy in bins of predicted confidence. Small bins have high uncertainty.</p>${(m.calibration_bins||[]).map(b=>`<div class="bar-row"><span class="bar-label">${Math.round(b.lower*100)}–${Math.round(b.upper*100)}%</span><div class="meter"><div class="meter-fill" style="width:${Math.round(b.empirical_accuracy*100)}%"></div></div><span class="bar-val">${number(b.n)} img</span></div>`).join('')}`)}</div>`;
- html+=`<section class="card card-padded"><div class="card-title"><h3>Misclassified research samples</h3>${pill(number(errors.length)+' errors','amber')}</div><div class="record-grid">${errors.slice(0,36).map(x=>`<button type="button" class="record" data-sample="${esc(x.sample_db_id)}"><img src="/files/${esc(x.sample_db_id)}" alt="Misclassified research sample ${esc(x.sample_id)}" loading="lazy"><div class="record-content"><span class="record-name">${esc(x.sample_id)}</span><span class="record-label">${esc(x.actual)} → ${esc(x.predicted)}</span></div></button>`).join('')}</div>${!errors.length?empty('No disagreements on this test split','This does not imply real-world model reliability.'):''}</section>`;
+ const e=bestExp('baseline');
+ if(!e){const failed=state.detail?.experiments?.some(x=>x.kind==='baseline'&&x.status==='failed');
+  return html+(failed?notice('A previous baseline failed. Open Analysis Jobs for its error; start a fresh job after any software update.','warn'):'')+
+   empty('No completed model evaluation yet','Run the CPU baseline. For failed attempts, review Analysis Jobs before retrying.',
+    btn('Train baseline','baseline-launch','btn-primary')+' '+btn('View Analysis Jobs','jobs'));}
+ const r=e.result?.test||{},m=r.metrics||{},errors=(r.predictions||[]).filter(item=>!item.correct);
+ html+=notice('This is a lightweight CPU reference classifier. Disagreements are not verified clinical errors; poor benchmark accuracy is not corrected by changing its display.');
+ html+='<div class="stats-row">'+stat('Test macro-F1',metric(m.macro_f1),'Bootstrap interval: '+((m.macro_f1_ci95||[]).map(metric).join(' to ')||'n/a'))+
+ stat('Balanced accuracy',metric(m.balanced_accuracy),'Class-balanced test metric')+
+ stat('Test errors',number(errors.length),'Against supplied labels')+
+ stat('Calibration error',metric(m.expected_calibration_error),'Exploratory ECE, lower is better')+'</div>';
+ html+='<section class="card card-padded section-gap"><div class="card-title"><h3>Confusion matrix</h3>'+
+  pill(number((m.labels||[]).length)+' classes','blue')+'</div>'+renderConfusionMatrix(m)+'</section>';
+ html+=card('Performance by recorded source site',renderSiteBreakdown(r.subgroups||[]));
+ html+='<div class="two-col equal section-gap">'+
+  card('Per-class performance','<div class="table-wrap"><table><thead><tr><th>Recorded class</th><th>Precision</th><th>Recall</th><th>F1</th><th>N</th></tr></thead><tbody>'+
+   (m.labels||[]).map(label=>{const val=m.per_class?.[label]||{};return '<tr><td>'+esc(label)+'</td><td>'+metric(val.precision)+'</td><td>'+metric(val.recall)+
+    '</td><td>'+metric(val['f1-score'])+'</td><td>'+number(val.support)+'</td></tr>'}).join('')+'</tbody></table></div>')+
+  card('Calibration by confidence','<p class="fine" style="margin-bottom:12px">Empirical accuracy in bins of predicted confidence. Small bins have high uncertainty.</p>'+
+    (m.calibration_bins||[]).map(bin=>'<div class="bar-row"><span class="bar-label">'+Math.round(bin.lower*100)+'–'+Math.round(bin.upper*100)+'%</span>'+
+     '<div class="meter"><div class="meter-fill" style="width:'+Math.round(bin.empirical_accuracy*100)+'%"></div></div>'+
+     '<span class="bar-val">'+number(bin.n)+' img</span></div>').join(''))+'</div>';
+ html+='<section class="card card-padded"><div class="card-title"><h3>Misclassified research samples</h3>'+
+  pill(number(errors.length)+' disagreements','amber')+'</div><div class="record-grid">'+
+  errors.slice(0,36).map(item=>'<button type="button" class="record" data-sample="'+esc(item.sample_db_id)+'">'+
+   '<img src="/files/'+esc(item.sample_db_id)+'" alt="Misclassified research sample '+esc(item.sample_id)+'" loading="lazy">'+
+   '<div class="record-content"><span class="record-name">'+esc(item.sample_id)+'</span>'+
+   '<span class="record-label">'+esc(item.actual)+' → '+esc(item.predicted)+'</span></div></button>').join('')+
+  '</div>'+(!errors.length?empty('No disagreements on this test split','This does not establish real-world performance.'):'')+'</section>';
  return html;
 }
+
 function renderRepro(){const d=state.detail?.dataset;let html=head('SCIENTIFIC TRACEABILITY','Reproducibility Engine','Reopen experiments, inspect immutable manifests and export transparent research audit records.',d?btn(icon('download')+' Export JSON report','download-json','btn-primary'):'');
  if(!d)return html+needDataset();
  const exps=state.detail.experiments||[];
