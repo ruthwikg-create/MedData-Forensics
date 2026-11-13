@@ -155,7 +155,7 @@ def audit(dataset_id,run_id,progress=None):
                 proba=np.zeros((len(train),len(classes)),dtype='float64')
                 for tr,va in folds.split(xx,yy,groups if use_group else None):
                     if len(set(yy[tr]))<len(classes):raise ValueError('Fold missing classes; cannot estimate out-of-fold probabilities')
-                    model=LogisticRegression(max_iter=250,random_state=42,class_weight='balanced',solver='liblinear')
+                    model=LogisticRegression(max_iter=500,random_state=42,class_weight='balanced',solver='lbfgs')
                     model.fit(xx[tr],yy[tr]);fold_p=model.predict_proba(xx[va]);
                     for j,lab in enumerate(model.classes_):proba[va,ci[lab]]=fold_p[:,j]
                 truth_p=np.asarray([proba[i,ci[lab]] for i,lab in enumerate(labels)])
@@ -206,26 +206,52 @@ def audit(dataset_id,run_id,progress=None):
 
 
 def forensic_graph(db, dataset_id, limit=100):
-    """Report only evidenced links; when none exist, show isolated real sample nodes."""
-    latest=db.scalar(select(AuditRun.id).where(AuditRun.dataset_id==dataset_id,AuditRun.status=='completed').order_by(AuditRun.created_at.desc()).limit(1))
-    findings=db.scalars(select(Finding).where(Finding.audit_id==latest).order_by(Finding.priority.desc()).limit(limit)).all() if latest else []
-    if findings:
-        selected_ids={v for f in findings for v in (f.sample_id,f.linked_id) if v}
-        samples=db.scalars(select(Sample).where(Sample.id.in_(selected_ids))).all() if selected_ids else []
+    """Visualize actual detector links, or isolated sample nodes when links are absent.
+
+    Never infer an edge merely because two records have similar labels or metadata.
+    Dataset-wide statistical findings are inspectable independent finding nodes.
+    """
+    latest=db.scalar(select(AuditRun.id).where(
+        AuditRun.dataset_id==dataset_id,AuditRun.status=='completed'
+    ).order_by(AuditRun.created_at.desc()).limit(1))
+    findings=db.scalars(select(Finding).where(
+        Finding.audit_id==latest
+    ).order_by(Finding.priority.desc()).limit(limit)).all() if latest else []
+    selected_ids={sid for finding in findings for sid in (finding.sample_id,finding.linked_id) if sid}
+    if selected_ids:
+        samples=db.scalars(select(Sample).where(
+            Sample.dataset_id==dataset_id,Sample.id.in_(selected_ids)
+        ).order_by(Sample.sample_id)).all()
     else:
-        # An isolated sample is a genuine dataset record, never a fabricated forensic relationship.
-        samples=db.scalars(select(Sample).where(Sample.dataset_id==dataset_id).order_by(Sample.sample_id).limit(12)).all()
-    nodes=[{'id':'s:'+x.id,'label':x.sample_id,'type':'sample','split':x.split,'group':x.group_id} for x in samples]
+        # This visual inventory is still useful if only global findings exist.
+        samples=db.scalars(select(Sample).where(
+            Sample.dataset_id==dataset_id
+        ).order_by(Sample.sample_id).limit(12)).all()
+    nodes=[{'id':'s:'+sample.id,'label':sample.sample_id,
+            'type':'sample','split':sample.split,'group':sample.group_id} for sample in samples]
+    known_samples={sample.id for sample in samples}
     edges=[]
-    for f in findings:
-        nodes.append({'id':'f:'+f.id,'label':f.kind.replace('_',' '),'type':'finding','status':f.status,'severity':f.severity,'priority':f.priority})
-        for sid in (f.sample_id,f.linked_id):
-            if sid:edges.append({'source':'f:'+f.id,'target':'s:'+sid})
-    return {'nodes':nodes,'edges':edges,'audit_completed':latest is not None,'finding_count':len(findings),
-            'network_mode':'evidence' if findings else 'sample_inventory', 'truncated':len(findings)>=limit,
-            'note':('No completed audit. Isolated sample nodes are shown without invented connections.' if not latest else
-                    'No linked findings were detected in the completed audit.' if not findings else
-                    'Connections indicate detector evidence, not verified patient identity.')}
+    linked_findings=0
+    for finding in findings:
+        nodes.append({'id':'f:'+finding.id,'label':finding.kind.replace('_',' '),
+                      'type':'finding','status':finding.status,
+                      'severity':finding.severity,'priority':finding.priority})
+        has_link=False
+        for sid in (finding.sample_id,finding.linked_id):
+            if sid and sid in known_samples:
+                edges.append({'source':'f:'+finding.id,'target':'s:'+sid})
+                has_link=True
+        if has_link:linked_findings+=1
+    if edges:
+        note='Edges represent detector evidence, not verified clinical or patient identity.'
+    elif latest:
+        note='Audit completed but no sample-linked findings are available. Showing real isolated image records and dataset-wide findings without inventing connections.'
+    else:
+        note='No completed audit. Showing real image samples without invented forensic connections.'
+    return {'nodes':nodes,'edges':edges,'audit_completed':latest is not None,
+            'finding_count':len(findings),'linked_finding_count':linked_findings,
+            'network_mode':'evidence' if edges else 'sample_inventory',
+            'truncated':len(findings)>=limit,'note':note}
 
 
 def ranking_comparison(db,dataset_id,budget=15):

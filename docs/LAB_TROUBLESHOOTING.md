@@ -47,3 +47,10 @@ Tests: `python -m pytest -q` and `node --test tests/test_frontend_routes.cjs tes
 ## Clear analysis notifications
 
 In **Analysis Jobs** (bell icon), use **Clear** on a finished job or **Clear notifications** to hide all completed, failed and cancelled notices from the current browser. Active queued/running jobs always remain visible and can still be cancelled. Use **Show recent history** to review cleared messages and failed-job error reasons. Clearing does not remove persisted jobs, audits, model artifacts, research results, or datasets.
+
+
+## Multiclass baseline failure and Evidence Graph
+
+Model Baseline and audit label-quality analysis use scikit-learn logistic regression with a multinomial-capable `lbfgs` solver, so authorized research datasets with **three or more classes** (for example PathMNIST) no longer fail solely because the old `liblinear` solver rejected multiclass fitting. Training still requires sufficient observations in multiple classes and a leakage-screened held-out test partition. Other dataset or environment failures remain possible and are reported in **Analysis Jobs**. Old failed jobs are not rewritten; run a **new** baseline after updating.
+
+The Evidence Graph is **detector-evidence-only**. It never draws fabricated links to make the display look full. After a completed audit with only dataset-wide findings or no linked findings, the graph shows **real isolated image-record nodes** plus any global finding nodes, with an explicit no-links explanation. When findings have image identifiers, the network draws and labels those edges. Open **Forensic Audit** first, check Analysis Jobs for completion, then open **Evidence Graph** and click **Reload graph**.
