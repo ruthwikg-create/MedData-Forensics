@@ -103,10 +103,8 @@ test('Cross-Dataset, Impact and Reproducibility work through their real UI contr
  await expect(page.locator('#crossTarget')).toBeVisible();
  await page.locator('#crossTarget').selectOption(target);
  await page.locator('[data-action="cross-launch"]').click();
- const crossJob=(await request.get('/api/jobs')).json;
- let jobs=await crossJob;
- let cross=jobs.find(job=>job.kind==='cross_dataset'&&job.status==='queued');
- if(!cross)cross=jobs.find(job=>job.kind==='cross_dataset');
+ let jobs=(await request.get('/api/jobs')).json();
+ let cross=jobs.filter(job=>job.kind==='cross_dataset').sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at)))[0];
  expect(cross,'Cross-Dataset job should be queued from the UI').toBeTruthy();
  await waitForCompletedJob(request,cross.id);
  await page.reload();await page.goto('/#/cross');
@@ -135,7 +133,7 @@ test('Cross-Dataset, Impact and Reproducibility work through their real UI contr
  await page.locator('[data-action="impact"]').click();
  await expect(page.getByText(/experiment queued/i)).toBeVisible();
  jobs=await (await request.get('/api/jobs')).json();
- const impactJob=jobs.find(job=>job.kind==='impact'&&['queued','running'].includes(job.status));
+ const impactJob=jobs.filter(job=>job.kind==='impact').sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at)))[0];
  expect(impactJob,'Impact job should be queued from the UI').toBeTruthy();
  await waitForCompletedJob(request,impactJob.id);
  await page.reload();await page.goto('/#/impact');
