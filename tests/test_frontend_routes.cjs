@@ -128,14 +128,14 @@ test('access token panel explains that localhost does not require a token by def
 test('evidence graph displays linked findings as accessible, scrollable node cards',()=>{
  const html=vm.runInContext("state.detail={dataset:{id:'demo',name:'Research set'}};state.graph={audit_completed:true,network_mode:'evidence',finding_count:1,nodes:[{id:'s:s1',label:'image-1',type:'sample',split:'train'},{id:'f:f1',label:'split leakage',type:'finding',status:'suspected'}],edges:[{source:'f:f1',target:'s:s1'}],note:'Detector evidence only'};renderGraph()",ctx);
  assert.ok(html.includes('id="nodeGraph"'));
- assert.ok(html.includes('Audited evidence network'));
- assert.ok(html.includes('1 evidence connections'));
+ assert.ok(html.includes('Interactive evidence graph; scroll to explore'));
+ assert.ok(html.includes('1 observed image–finding links'));
  const box={innerHTML:'',querySelectorAll:()=>[]};
  ctx.document.querySelector=s=>s==='#nodeGraph'?box:null;
  vm.runInContext("drawGraph(state.graph)",ctx);
  assert.ok(box.innerHTML.includes('<svg'));
  assert.ok(box.innerHTML.includes('width="950"'));
- assert.ok(box.innerHTML.includes('Detector-linked findings'));
+ assert.ok(box.innerHTML.includes('Actual forensic evidence connections'));
  assert.ok(box.innerHTML.includes('data-node="s:s1"'));
  assert.ok(box.innerHTML.includes('data-node="f:f1"'));
  assert.ok(box.innerHTML.includes('stroke-opacity=".8"'));
@@ -205,4 +205,68 @@ test('Compare button is disabled when audit has zero findings',()=>{
  const out=vm.runInContext("state.detail={dataset:{id:'demo',name:'No-finding set'},audits:[{status:'completed',summary:{total_findings:0,valid_samples:42,by_kind:{}}}]};state.findings={items:[],count:0};state.rankings={strategies:[],message:'Audit completed with no candidate findings.'};renderAudit()",ctx);
  assert.ok(out.includes('disabled title="No detector findings are available to compare"'));
  assert.ok(out.includes('Audit completed with no candidate findings'));
+});
+
+
+test('Evidence Graph controls have real search, severity, connection and zoom behaviors',()=>{
+ const graph={audit_completed:true,note:'Synthetic detector observations',
+   nodes:[
+    {id:'s:s1',type:'sample',label:'scan-a',split:'train'},
+    {id:'s:s2',type:'sample',label:'scan-b',split:'test'},
+    {id:'s:s3',type:'sample',label:'scan-c',split:'validation'},
+    {id:'f:f1',type:'finding',label:'split leakage',severity:'high',status:'suspected'},
+    {id:'f:f2',type:'finding',label:'source association',severity:'medium',status:'uncertain'}],
+   edges:[{source:'f:f1',target:'s:s1'},{source:'f:f1',target:'s:s2'}]};
+ ctx.testGraph=graph;
+ let html=vm.runInContext("state.detail={dataset:{id:'synthetic',name:'Synthetic QA'}};state.graph=testGraph;state.graphUi={search:'',severity:'all',links:'all',zoom:1};renderGraph()",ctx);
+ for(const part of ['id="graphSearch"','id="graphSeverity"','id="graphLinks"','data-action="graph-zoom-out"','data-action="graph-zoom-in"','data-action="graph-reset"','graphExplorerResults']){
+  assert.ok(html.includes(part),'missing functional graph control '+part);
+ }
+ let view=vm.runInContext("graphVisibleData(testGraph,{search:'',severity:'high',links:'all'})",ctx);
+ assert.equal(view.edges.length,2);
+ assert.ok(view.nodes.some(n=>n.id==='f:f1'));
+ assert.ok(!view.nodes.some(n=>n.id==='f:f2'));
+ view=vm.runInContext("graphVisibleData(testGraph,{search:'scan-b',severity:'all',links:'all'})",ctx);
+ assert.equal(view.edges.length,1);
+ assert.equal(view.nodes.length,2);
+ assert.deepEqual([...view.nodes.map(x=>x.id)].sort(),['f:f1','s:s2']);
+ view=vm.runInContext("graphVisibleData(testGraph,{search:'',severity:'all',links:'unlinked'})",ctx);
+ assert.equal(view.edges.length,0);
+ assert.ok(view.nodes.some(n=>n.id==='s:s3'));
+ assert.ok(view.nodes.some(n=>n.id==='f:f2'));
+ view=vm.runInContext("graphVisibleData(testGraph,{search:'absent',severity:'all',links:'all'})",ctx);
+ assert.equal(view.nodes.length,0);
+ assert.equal(view.edges.length,0);
+ const box={innerHTML:'',querySelectorAll:()=>[]};
+ ctx.document.querySelector=sel=>sel==='#nodeGraph'?box:null;
+ vm.runInContext("state.graphUi.zoom=1.5;drawGraph(testGraph)",ctx);
+ assert.ok(box.innerHTML.includes('width="1425"'),'SVG zoom should reflect the selected scale');
+ assert.ok(box.innerHTML.includes('data-node="f:f1"'));
+ assert.ok(box.innerHTML.includes('data-node="s:s1"'));
+ delete ctx.document.querySelector;
+ vm.runInContext("state.graphUi={search:'',severity:'all',links:'all',zoom:1}",ctx);
+});
+
+test('real baseline confusion cells drill into actual predicted test records',()=>{
+ const payload={kind:'baseline',status:'completed',checkpoint_available:true,
+   result:{test:{metrics:{labels:['A','B'],macro_f1:0.5,balanced_accuracy:0.5,
+      confusion_matrix:[[1,1],[0,1]],calibration_bins:[],per_class:{}},
+     predictions:[
+      {sample_db_id:'db1',sample_id:'s1',actual:'A',predicted:'A',correct:true},
+      {sample_db_id:'db2',sample_id:'s2',actual:'A',predicted:'B',correct:false},
+      {sample_db_id:'db3',sample_id:'s3',actual:'B',predicted:'B',correct:true}
+     ]}}};
+ ctx.baselinePayload=payload;
+ const html=vm.runInContext("state.detail={dataset:{id:'demo'},experiments:[baselinePayload]};state.failureCell='';renderFailures()",ctx);
+ assert.ok(html.includes('data-confusion="0:1"'));
+ assert.ok(html.includes('aria-pressed="false"'));
+ assert.ok(html.includes('id="failureGallery"'));
+ assert.ok(html.includes('data-sample="db2"'));
+ let selected=vm.runInContext("state.failureCell='1:1';renderFailureGallery(baselinePayload)",ctx);
+ assert.ok(selected.includes('data-sample="db3"'));
+ assert.ok(!selected.includes('data-sample="db2"'));
+ assert.ok(selected.includes('data-action="failure-reset"'));
+ let defaultGallery=vm.runInContext("state.failureCell='';renderFailureGallery(baselinePayload)",ctx);
+ assert.ok(defaultGallery.includes('data-sample="db2"'));
+ assert.ok(!defaultGallery.includes('data-sample="db1"'));
 });
