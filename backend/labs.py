@@ -20,8 +20,21 @@ def _load(db,dataset_id):
     rows=db.scalars(select(Sample).where(Sample.dataset_id==dataset_id).order_by(Sample.sample_id)).all()
     return d,[s for s in rows if s.width and s.height]
 
+def _select_training_subset(train,max_train=2400,seed=42):
+    """Preserve each observed class when bounding CPU training cost.
+
+    The returned subset is deterministic for a fixed archive/sample order and
+    seed. Capping the training set changes prevalence and must be recorded.
+    """
+    train=list(train)
+    if len(train)<=max_train:return train
+    from .ingest import _stratified_subset_indices
+    indices=_stratified_subset_indices([s.label for s in train],max_train,seed=seed)
+    return [train[int(i)] for i in indices]
+
+
 def _model(train,seed=42,max_train=2400):
-    train=train[:max_train]
+    train=_select_training_subset(train,max_train,seed)
     if len(train)<20 or len(set(x.label for x in train))<2:raise ValueError('Requires >=20 training images and >=2 classes')
     counts=Counter(x.label for x in train)
     # A rare class with one or two samples is allowed for a diagnostic software smoke test.
@@ -164,8 +177,10 @@ def run_baseline(exp_id,progress=None):
         if not test:raise ValueError('Dataset needs a held-out test split')
         if progress:progress(15,'Extracting CPU-friendly HOG and color features')
         safe_validation,safe_test,integrity=_evaluation_integrity(train,validation,test)
-        model=_model(train,seed)
+        fit_train=_select_training_subset(train,seed=seed)
+        model=_model(fit_train,seed)
         class_counts=Counter(s.label for s in train)
+        fit_class_counts=Counter(s.label for s in fit_train)
         training_warnings=[]
         if min(class_counts.values())<3:
             training_warnings.append('Some training classes contain fewer than 3 samples. Results are highly unstable; obtain more independently labeled examples before making research claims.')
@@ -173,8 +188,14 @@ def run_baseline(exp_id,progress=None):
             training_warnings.append('Held-out test includes labels absent from training; those classes cannot be predicted by this baseline.')
         if len(safe_test)<20:
             training_warnings.append('Fewer than 20 independent test records remain after leakage screening. Performance intervals will be unstable.')
+        if len(fit_train)<len(train):
+            training_warnings.append('The CPU model used a deterministic class-preserving subset of training data. Source prevalence and sample coverage differ from the original training split.')
         if progress:progress(63,'Evaluating only provenance-screened validation and test partitions')
-        outcome={'training_class_counts':dict(class_counts),'training_warnings':training_warnings,'validation':_score(model,safe_validation,seed) if safe_validation else None,'test':_score(model,safe_test,seed),
+        outcome={'training_class_counts':dict(class_counts),
+                 'model_fit_training_class_counts':dict(fit_class_counts),
+                 'source_train_n':len(train),'model_fit_train_n':len(fit_train),
+                 'training_selection_policy':'all_training_images' if len(fit_train)==len(train) else 'deterministic_class_preserving_seed_'+str(seed),
+                 'training_warnings':training_warnings,'validation':_score(model,safe_validation,seed) if safe_validation else None,'test':_score(model,safe_test,seed),
            'data_quality_warnings':_check_group_leakage(samples),'evaluation_integrity':integrity,
            'train_n':len(train),'test_n':len(safe_test),'validation_n':len(safe_validation),
            'method':'Logistic regression on HOG + downsized RGB; no GPU, no diagnostic claims','baseline':True}
@@ -315,9 +336,16 @@ def run_impact(exp_id,progress=None):
         validation=[s for s in samples if s.split=='val']
         _,safe_test,integrity=_evaluation_integrity(train,validation,test)
         if progress:progress(18,'Training original baseline on fixed training split')
-        m0=_model(train,42);first=_score(m0,safe_test,42)
+        fit_train=_select_training_subset(train,seed=42)
+        removed_from_fit=[s for s in fit_train if s.id in exclusions]
+        if not removed_from_fit:
+            raise ValueError('The confirmed training exclusions are absent from the capped model-fit subset. Select a larger training cap or different documented sampling plan before the impact comparison.')
+        fit_curated=[s for s in fit_train if s.id not in exclusions]
+        if len(fit_curated)<20 or len({s.label for s in fit_curated})<2:
+            raise ValueError('Removing confirmed findings from the fixed model training subset leaves too few images or classes')
+        m0=_model(fit_train,42);first=_score(m0,safe_test,42)
         if progress:progress(60,'Training removal-only ablation on curated training split')
-        m1=_model(curated,42);second=_score(m1,safe_test,42)
+        m1=_model(fit_curated,42);second=_score(m1,safe_test,42)
         # Paired resampling preserves correlations between the two predictions.
         y=np.asarray([s.label for s in safe_test]);labs=sorted(set(y.tolist())|set(m0.classes_.tolist())|set(m1.classes_.tolist()))
         p0=np.asarray([m0.classes_[int(np.argmax(p))] for p in _pred(m0,safe_test)])
@@ -345,6 +373,9 @@ def run_impact(exp_id,progress=None):
                meta=jd({'derived_from_sample_id':s.id,'remediation':'excluded confirmed training concern'})))
         db.add_all(new_samples);version.manifest_hash=manifest_hash(new_samples)
         output={'derived_dataset_id':version.id,'removed_train_sample_ids':sorted(exclusions),'removed_count':len(exclusions),'original_train_n':len(train),'curated_train_n':len(curated),
+           'original_model_fit_train_n':len(fit_train),'curated_model_fit_train_n':len(fit_curated),
+           'removed_from_model_fit_n':len(removed_from_fit),
+           'model_fit_selection_policy':'fixed_deterministic_class_preserving_seed_42',
            'evaluation_test_ids_sha256':hashlib.sha256('|'.join(sorted(x.sample_id for x in safe_test)).encode()).hexdigest(),
            'evaluation_integrity':integrity,'paired_macro_f1_delta_ci95':delta_ci,
            'before':first['metrics'],'after':second['metrics'],
