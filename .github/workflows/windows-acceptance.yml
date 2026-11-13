@@ -18,6 +18,6 @@ jobs:
       - name: Run backend and API tests
         run: python -m pytest -q
       - name: Test frontend routing
-        run: node --test tests/test_frontend_routes.cjs tests/test_import_progress.cjs
+        run: node --test tests/test_frontend_routes.cjs tests/test_import_progress.cjs tests/test_notifications.cjs
       - name: Check Python syntax
         run: python -m compileall -q backend scripts
