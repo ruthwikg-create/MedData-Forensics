@@ -202,3 +202,25 @@ def test_cross_dataset_blocks_generic_or_unspecified_modalities():
             json={'kind':'cross_dataset','config':{'target_dataset_id':target_id}})
         assert blocked.status_code==422
         assert 'specific imaging modality' in blocked.json()['detail'].lower()
+
+def test_dataset_modality_correction_requires_and_records_documentation_attestation():
+    with TestClient(app) as client:
+        did=client.post('/api/datasets/demo',json={'count':48,'seed':361}).json()['dataset_id']
+        with Session() as db:
+            db.get(Dataset,did).modality='Other / unspecified'
+            db.commit()
+        missing=client.patch(f'/api/datasets/{did}/modality',json={
+            'modality':'Dermatoscopic / skin lesion images',
+            'source_documentation':'Official dataset paper and provider README',
+            'confirmed':False})
+        assert missing.status_code==422
+        saved=client.patch(f'/api/datasets/{did}/modality',json={
+            'modality':'Dermatoscopic / skin lesion images',
+            'source_documentation':'Official dataset paper and provider README',
+            'confirmed':True})
+        assert saved.status_code==200,saved.text
+        body=saved.json()
+        assert body['dataset']['modality']=='Dermatoscopic / skin lesion images'
+        assert body['attestation']['previous_modality']=='Other / unspecified'
+        assert body['attestation']['source_documentation']=='Official dataset paper and provider README'
+        assert body['dataset']['metadata']['modality_attestations'][-1]['confirmed_modality']=='Dermatoscopic / skin lesion images'
