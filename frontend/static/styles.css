@@ -228,3 +228,11 @@
  .job-inbox-row{gap:10px}
  .job-inbox-footer .btn{min-height:44px}
 }
+
+
+/* Forensic graph: readable unlinked sample inventory without invented edges. */
+.node-graph{min-height:340px}
+.node-graph svg{width:950px;max-width:none;height:auto}
+.graph-scroll-hint{font-size:12px;line-height:1.6;color:var(--muted);margin:5px 0 12px}
+.graph-card[role="button"]{cursor:pointer}
+.graph-card[role="button"]:focus-visible{outline:3px solid var(--teal);outline-offset:2px}
