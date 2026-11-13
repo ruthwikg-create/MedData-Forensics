@@ -132,8 +132,12 @@ def _score(model,rows,boot_seed=42):
     sites=defaultdict(list)
     for p in predictions:sites[p['site']].append(p)
     for site,items in sorted(sites.items()):
-        if len(items)<5:subgroups.append({'name':site,'n':len(items),'metric':None,'note':'Too few records to report subgroup metric'})
-        else:subgroups.append({'name':site,'n':len(items),'metric':float(np.mean([p['correct'] for p in items])),'note':'Exploratory site-level accuracy'})
+        if site=='unknown':
+            subgroups.append({'name':site,'n':len(items),'metric':None,'note':'Missing site metadata; not a real source subgroup'})
+        elif len(items)<5:
+            subgroups.append({'name':site,'n':len(items),'metric':None,'note':'Too few records to report subgroup metric'})
+        else:
+            subgroups.append({'name':site,'n':len(items),'metric':float(np.mean([p['correct'] for p in items])),'note':'Exploratory site-level accuracy'})
     return {'metrics':metrics,'predictions':predictions,'subgroups':subgroups}
 
 def _manifest(d,config,seed):
@@ -275,21 +279,78 @@ def run_cross_dataset(exp_id,progress=None):
         if progress:progress(100,'Cross-dataset evaluation complete')
         return outcome
 
+IMPACT_REVIEW_KINDS=frozenset(('split_leakage','group_overlap','exact_duplicate','pixel_duplicate','near_duplicate','label_suspicion'))
+
+def impact_readiness(db,dataset_id):
+    """Report prerequisites using exactly the same removal logic as the actual ablation."""
+    d,samples=_load(db,dataset_id)
+    train=[s for s in samples if s.split=='train']
+    test=[s for s in samples if s.split=='test']
+    train_by_id={s.id:s for s in train}
+    confirmed=db.scalars(select(Finding).where(
+        Finding.dataset_id==d.id,Finding.status=='confirmed')).all()
+    eligible=[f for f in confirmed if f.kind in IMPACT_REVIEW_KINDS]
+    excluded={sid for f in eligible for sid in (f.sample_id,f.linked_id)
+              if sid and sid in train_by_id}
+    curated=[sample for sample in train if sample.id not in excluded]
+    counts=Counter(s.label for s in curated)
+    if not test:
+        reason='A held-out test split is required before an impact comparison.'
+    elif not excluded:
+        reason=('No eligible reviewer-confirmed training images. Run the forensic audit, inspect its evidence in Review Center, and confirm supported training-sample concerns before an ablation.')
+    elif len(curated)<20 or len(counts)<2 or min(counts.values())<3:
+        reason='The confirmed exclusions leave insufficient training images or classes for a valid retrained baseline.'
+    else:
+        reason=''
+    return {'ready':not reason,'reason':reason,'eligible_exclusion_count':len(excluded),
+            'eligible_finding_count':len(eligible),
+            'confirmed_finding_count':len(confirmed),
+            'training_count':len(train),'test_count':len(test),
+            'remaining_train_count':len(curated),'excluded_ids':excluded}
+
+
+def cross_dataset_readiness(db,dataset_id):
+    """Screen distinct datasets for matching declared modality, labels, test split and hash independence."""
+    source,source_samples=_load(db,dataset_id)
+    base_models=db.scalars(select(Experiment).where(
+        Experiment.dataset_id==dataset_id,Experiment.kind=='baseline',
+        Experiment.status=='completed').order_by(Experiment.created_at.desc())).all()
+    baseline_ready=any((ARTIFACT_ROOT/e.id/'baseline.joblib').is_file() for e in base_models)
+    source_training=[s for s in source_samples if s.split=='train'][:2400]
+    source_classes=set(s.label for s in source_training)
+    source_hashes={s.sha256 for s in source_samples if s.sha256}
+    options=[]
+    datasets=db.scalars(select(Dataset).where(Dataset.id!=dataset_id).order_by(Dataset.created_at.desc())).all()
+    for target in datasets:
+        _,target_samples=_load(db,target.id)
+        target_classes={s.label for s in target_samples}
+        issues=[]
+        if target.modality!=source.modality:
+            issues.append('Different declared modality')
+        if source_classes!=target_classes:
+            issues.append('Class labels do not match the source baseline')
+        if not any(s.split=='test' for s in target_samples):
+            issues.append('No target test split')
+        if any(s.sha256 in source_hashes for s in target_samples if s.sha256):
+            issues.append('Image content overlaps the source collection')
+        options.append({'id':target.id,'name':target.name,'eligible':not issues,
+                        'issues':issues,'sample_count':len(target_samples),
+                        'test_count':sum(s.split=='test' for s in target_samples),
+                        'modality':target.modality})
+    return {'source_baseline_ready':baseline_ready,'source_classes':sorted(source_classes),
+            'options':options}
+
+
 def run_impact(exp_id,progress=None):
     """Removal-only ablation of REVIEW-CONFIRMED training findings, never alters reference dataset."""
     with Session() as db:
         e=db.get(Experiment,exp_id);d,samples=_load(db,e.dataset_id);cfg=jl(e.config)
         train=[s for s in samples if s.split=='train'];test=[s for s in samples if s.split=='test']
         if not test:raise ValueError('A fixed test split is required')
-        confirmed=db.scalars(select(Finding).where(Finding.dataset_id==d.id,Finding.status=='confirmed')).all()
-        exclusions=set()
-        for f in confirmed:
-            if f.kind not in ('split_leakage','group_overlap','exact_duplicate','pixel_duplicate','near_duplicate','label_suspicion'):continue
-            for sid in [f.sample_id,f.linked_id]:
-                if sid and any(x.id==sid and x.split=='train' for x in train):exclusions.add(sid)
-        if not exclusions:raise ValueError('No confirmed training-sample findings. Review and confirm a supported issue first.')
+        eligibility=impact_readiness(db,d.id)
+        if not eligibility['ready']:raise ValueError(eligibility['reason'])
+        exclusions=eligibility['excluded_ids']
         curated=[s for s in train if s.id not in exclusions]
-        if len(curated)<20 or len(set(x.label for x in curated))<2:raise ValueError('Exclusions leave too few training examples')
         validation=[s for s in samples if s.split=='val']
         _,safe_test,integrity=_evaluation_integrity(train,validation,test)
         if progress:progress(18,'Training original baseline on fixed training split')
