@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from backend.api import app
 from backend.db import Session,Sample,Dataset
-from backend.security import safe_path
+from backend.security import safe_path,manifest_hash
 from backend.worker import run_one
 
 
@@ -135,3 +135,52 @@ def test_impact_readiness_blocks_empty_run_then_allows_confirmed_train_evidence(
         output=client.get('/api/experiments/'+experiment.json()['experiment_id']).json()['result']
         assert output['removed_count']>=1
         assert output['evaluation_test_ids_sha256']
+
+def test_cross_dataset_accepts_only_confirmed_one_to_one_label_mapping():
+    with TestClient(app) as client:
+        source_id=client.post('/api/datasets/demo',json={'count':64,'seed':341}).json()['dataset_id']
+        target_id=client.post('/api/datasets/demo',json={'count':64,'seed':342}).json()['dataset_id']
+        baseline=client.post(f'/api/datasets/{source_id}/experiments',
+            json={'kind':'baseline','config':{'seed':42}}).json()
+        assert finish(client,baseline['job_id'])['status']=='completed'
+
+        with Session() as db:
+            target=db.get(Dataset,target_id)
+            rows=db.scalars(select(Sample).where(Sample.dataset_id==target_id)).all()
+            for sample in rows:
+                sample.label={'pattern_a':'0','pattern_b':'1'}[sample.label]
+            target.manifest_hash=manifest_hash(rows)
+            db.commit()
+
+        readiness=client.get(f'/api/datasets/{source_id}/cross-dataset-readiness').json()
+        candidate=next(item for item in readiness['targets'] if item['id']==target_id)
+        assert candidate['compatible'] is False
+        assert candidate['mapping_eligible'] is True
+        assert candidate['selectable'] is True
+
+        missing=client.post(f'/api/datasets/{source_id}/experiments',
+            json={'kind':'cross_dataset','config':{'target_dataset_id':target_id}})
+        assert missing.status_code==422
+        assert 'one-to-one' in missing.json()['detail'].lower()
+
+        invalid=client.post(f'/api/datasets/{source_id}/experiments',
+            json={'kind':'cross_dataset','config':{
+                'target_dataset_id':target_id,
+                'target_label_mapping':{'0':'pattern_a','1':'pattern_a'},
+                'label_mapping_confirmed':True}})
+        assert invalid.status_code==422
+        assert 'one-to-one' in invalid.json()['detail'].lower()
+
+        config={'target_dataset_id':target_id,
+                'target_label_mapping':{'0':'pattern_a','1':'pattern_b'},
+                'label_mapping_confirmed':True}
+        accepted=client.post(f'/api/datasets/{source_id}/experiments',
+            json={'kind':'cross_dataset','config':config})
+        assert accepted.status_code==200,accepted.text
+        finished=finish(client,accepted.json()['job_id'])
+        assert finished['status']=='completed',finished
+        result=client.get('/api/experiments/'+accepted.json()['experiment_id']).json()['result']
+        assert result['label_mapping']==config['target_label_mapping']
+        assert result['label_mapping_confirmed'] is True
+        assert result['external_test']['metrics']['n']>0
+        assert set(result['external_test']['metrics']['labels'])=={'pattern_a','pattern_b'}
