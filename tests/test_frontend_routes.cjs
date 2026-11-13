@@ -142,3 +142,23 @@ test('dataset-wide findings without image evidence show a list, not invented edg
  assert.ok(html.includes('data-finding="f1"'));
  assert.ok(html.includes('No detector-linked image relationships'));
 });
+
+test('approved transparent MedData Forensics wordmark replaces the old sidebar logo',()=>{
+ const html=fs.readFileSync(path.join(__dirname,'../frontend/static/index.html'),'utf8');
+ assert.ok(html.includes('class="brand-wordmark"'));
+ assert.ok(html.includes('src="/assets/meddata-wordmark-dark.svg"'));
+ assert.ok(html.includes('alt="MedData Forensics"'));
+ assert.ok(!html.includes('class="brand-mark"'), 'old graphic symbol must be removed');
+ const dark=fs.readFileSync(path.join(__dirname,'../frontend/static/meddata-wordmark-dark.svg'),'utf8');
+ const light=fs.readFileSync(path.join(__dirname,'../frontend/static/meddata-wordmark.svg'),'utf8');
+ assert.ok(dark.includes('<title>MedData Forensics</title>'));
+ assert.ok(dark.includes('viewBox="0 0 874 288"'));
+ for(const source of [dark,light]){
+  assert.ok(!source.includes('<rect'), 'wordmark must have no background rectangle');
+  assert.ok(!source.includes('<image'), 'wordmark must not have embedded raster background');
+  assert.ok(source.includes('<path'), 'logo lettering must be scalable vector artwork');
+ }
+ const css=fs.readFileSync(path.join(__dirname,'../frontend/static/styles.css'),'utf8');
+ assert.ok(css.includes('.brand-wordmark{display:block'));
+ assert.ok(css.includes('aspect-ratio:874/288'));
+});

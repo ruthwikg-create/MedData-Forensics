@@ -48,3 +48,13 @@ Security UX: identifiers displayed in truncated form only for UI convenience wit
 - [ ] Full automated WCAG audit in production browser
 - [ ] Independent usability testing with biomedical researchers
 - [ ] Dedicated screen-reader compatibility validation with real study datasets
+
+
+## Logo and wordmark
+
+Use the user-approved two-line **MedData Forensics** wordmark, with no extra icon or background. Its letter silhouettes are traced directly from the approved transparent logo artwork. The assets have the same aspect ratio and paths:
+
+- `frontend/static/meddata-wordmark.svg`: original near-navy MedData and teal Forensics for light surfaces
+- `frontend/static/meddata-wordmark-dark.svg`: light MedData and mint-teal Forensics for the permanently dark navigation sidebar
+
+The sidebar shows the dark-surface variant as an image with meaningful alt text. Preserve its aspect ratio and clear space, avoid shadows or added marks, and keep the background genuinely transparent. The image scales with the sidebar width and does not depend on an external font or internet resource.
