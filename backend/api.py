@@ -313,8 +313,9 @@ def _cross_dataset_readiness(db,did):
         if pixel_overlap:
             reasons.append(f'{pixel_overlap} target image(s) share recorded decoded-pixel hashes with the source.')
         label_mapping_required=bool(labels and source_train_labels!=labels)
-        mapping_eligible=bool(label_mapping_required and len(source_train_labels)==len(labels) and not reasons)
-        if label_mapping_required and not mapping_eligible:
+        same_class_count=len(source_train_labels)==len(labels)
+        mapping_eligible=bool(label_mapping_required and same_class_count and not reasons)
+        if label_mapping_required and not same_class_count:
             reasons.append('Label vocabularies differ and cannot be paired one-to-one because their class counts differ.')
         compatible=not reasons and not label_mapping_required
         selectable=compatible or mapping_eligible
