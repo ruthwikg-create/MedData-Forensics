@@ -556,41 +556,60 @@ function renderCounterfactual(){
 function renderCross(){
  let {html,e}=labBase('GENERALIZATION TEST','Cross-Dataset Reliability Lab','Evaluate a frozen baseline model against a second, explicitly compatible research dataset.','cross_dataset','Run external evaluation');
  if(!state.detail)return html;
- const readiness=state.crossReadiness||{targets:[],compatible_target_count:0};
- const targets=readiness.targets||[],compatible=targets.filter(target=>target.compatible);
- if(!compatible.length){
+ const readiness=state.crossReadiness||{targets:[],compatible_target_count:0,source:{training_labels:[]}};
+ const targets=readiness.targets||[],eligible=targets.filter(target=>target.selectable||target.compatible||target.mapping_eligible);
+ const sourceLabels=readiness.source?.training_labels||[];
+ if(!eligible.length){
   html=html.replace(/<button type="button" class="btn btn-primary" data-action="cross-launch">[\s\S]*?<\/button>/,
-   '<button type="button" class="btn btn-primary" disabled aria-disabled="true">'+icon('lock')+' Awaiting compatible dataset</button>');
+   '<button type="button" class="btn btn-primary" disabled aria-disabled="true">'+icon('lock')+' Awaiting compatible collection</button>');
  }
  const candidateRows=targets.map(target=>{
-  const status=target.compatible?pill('Compatible','green'):pill('Not compatible','amber');
-  const why=target.compatible?'Labels, declared modality and target test split match.':
+  const status=target.compatible?pill('Compatible','green'):
+    target.mapping_eligible?pill('Needs explicit mapping','amber'):pill('Not compatible','red');
+  const why=target.compatible?'Image modality, class vocabulary, test split and known duplicate checks pass.':
+    target.mapping_eligible?'The class counts match. Map every target label to one source class and confirm the mapping from the dataset documentation.':
     (target.reasons||[]).join(' ');
   return '<div class="lab-target-item"><div class="lab-target-copy"><strong>'+esc(target.name)+'</strong>'+
     '<small>'+number(target.sample_count)+' images · '+esc(target.modality||'Modality not recorded')+'</small>'+
     '<p>'+esc(why)+'</p></div>'+status+'</div>';
  }).join('');
- let selector='';
- if(compatible.length){
-  selector='<div class="field"><label for="crossTarget">Compatible target dataset</label><select class="select" id="crossTarget" required>'+
+ const selector=eligible.length?
+  '<div class="field"><label for="crossTarget">Target research collection</label><select class="select" id="crossTarget" required>'+
    '<option value="">Choose a compatible collection</option>'+
-   compatible.map(target=>'<option value="'+esc(target.id)+'">'+esc(target.name)+' ('+number(target.sample_count)+' images)</option>').join('')+
-   '</select><small>Only collections passing the metadata preflight are selectable. The worker performs an additional decoded-pixel duplicate check.</small></div>';
- }
+   eligible.map(target=>'<option value="'+esc(target.id)+'">'+esc(target.name)+' ('+number(target.sample_count)+' images)'+(target.mapping_eligible?' · mapping required':'')+'</option>').join('')+
+  '</select><small>Only collections passing modality, test-split and duplicate preflight are selectable.</small></div>':'';
+ const mappingPanels=eligible.filter(target=>target.mapping_eligible).map(target=>
+  '<div class="cross-label-mapping" data-target-map="'+esc(target.id)+'" hidden>'+
+   '<h4>Explicit one-to-one class mapping</h4>'+
+   '<p class="fine">For each target label, select the source-model class it represents. Use the original dataset documentation; do not guess from numeric IDs or similar names.</p>'+
+   target.labels.map(label=>'<div class="field"><label>'+esc(target.name)+' label: <strong>'+esc(label)+'</strong></label>'+
+    '<select class="select" data-target-label="'+esc(label)+'"><option value="">Choose source class</option>'+
+    sourceLabels.map(sourceLabel=>'<option value="'+esc(sourceLabel)+'">'+esc(sourceLabel)+'</option>').join('')+
+    '</select></div>').join('')+
+   '<label class="check-row"><input type="checkbox" data-target-map-confirm> I verified this one-to-one mapping against the source and target dataset documentation.</label>'+
+  '</div>'
+ ).join('');
  html+='<section class="card card-padded lab-readiness-card"><div class="card-title"><h3>External research collection</h3>'+
-   pill(compatible.length+' compatible','blue')+'</div>'+
+   pill(eligible.length+' eligible','blue')+'</div>'+
    (targets.length?selector:'<div class="lab-empty-state"><strong>Only one dataset is currently loaded</strong>'+
     '<p>Cross-Dataset Lab needs a second, independently collected dataset. Import another collection before continuing.</p>'+
-    '<p class="fine">The target must have the same declared image modality, exactly matching class labels, a held-out test split and no known image-hash overlap.</p>'+
-    '<div class="actions">'+btn(icon("upload")+' Import another dataset','import','btn-primary')+
-    btn('Import a large ZIP','large-import','btn')+'</div></div>')+
-   (targets.length&&!compatible.length?'<div class="lab-empty-state"><strong>No compatible target found</strong>'+
-    '<p>Other datasets are loaded, but none currently meets the compatibility requirements. Do not choose a mismatched dataset just to make the experiment run.</p>'+
+    '<p class="fine">A valid target needs a compatible image modality, a held-out test split and no known image-hash overlap.</p>'+
+    '<div class="actions">'+btn(icon('upload')+' Import another dataset','import','btn-primary')+
+    btn('Import a large ZIP','large-import','btn')+
+    btn('Create two synthetic collections to test this lab','cross-demo-pair','btn')+'</div></div>')+
+   (targets.length&&!eligible.length?'<div class="lab-empty-state"><strong>No compatible target found</strong>'+
+    '<p>Other datasets are loaded, but none passes the technical compatibility checks. The reasons are listed below. Do not bypass modality, duplicate or test-split checks.</p>'+
     '<div class="actions">'+btn('Import another dataset','import','btn-primary')+
-    btn('Import a large ZIP','large-import','btn')+'</div></div>':'')+
+    btn('Create two synthetic collections to test this lab','cross-demo-pair','btn')+'</div></div>':'')+
+   mappingPanels+
    (candidateRows?'<div class="lab-target-list" aria-label="Dataset compatibility results">'+candidateRows+'</div>':'')+
-   '<p class="fine">A matching label name and modality are only technical screening criteria. They do not prove that two datasets have clinically equivalent labels or populations.</p></section>';
- if(e){const r=e.result,m=r.external_test?.metrics||{};html+='<div class="stats-row">'+stat('External macro-F1',metric(m.macro_f1),'Frozen model')+stat('Balanced accuracy',metric(m.balanced_accuracy),'Target dataset')+stat('Target samples',number(m.n),'Held-out target test')+stat('Data source',short(r.target_dataset_id),'Target dataset ID')+'</div>'+notice((r.comparison_limits||[]).join(' '),'warn');}
+   '<p class="fine">A user-supplied class mapping is recorded with the experiment. It does not prove clinical equivalence, matching populations or comparable acquisition protocols.</p>'+
+   (state.detail.dataset.synthetic?notice('The selected source is synthetic geometry. Use this pair to test the software workflow only; it is not biomedical evidence.','warn'):'')+
+   '</section>';
+ if(!readiness.baseline_ready)html+=notice('A completed CPU baseline checkpoint is also required. Open Model Failure Explorer and train the source dataset before running external evaluation.','warn');
+ if(e){const r=e.result,m=r.external_test?.metrics||{};html+='<div class="stats-row">'+stat('External macro-F1',metric(m.macro_f1),'Frozen source model')+stat('Balanced accuracy',metric(m.balanced_accuracy),'Mapped target test')+stat('Target samples',number(m.n),'Held-out target test')+stat('Data source',short(r.target_dataset_id),'Target dataset ID')+'</div>'+
+  (r.label_mapping_confirmed?card('Recorded class mapping','<div class="mono-box">'+esc(JSON.stringify(r.label_mapping,null,2))+'</div>'):'')+
+  notice((r.comparison_limits||[]).join(' '),'warn');}
  return html;
 }
 function renderImpact(){
@@ -855,7 +874,7 @@ async function launchExperiment(kind,config={}){
    const readiness=await api('/api/datasets/'+state.did+'/cross-dataset-readiness');
    state.crossReadiness=readiness;
    const target=readiness.targets?.find(item=>item.id===config.target_dataset_id);
-   if(!target||!target.compatible){
+   if(!target||!(target.selectable||target.compatible||target.mapping_eligible)){
     toast(target?.reasons?.join(' ')||'Choose an imported compatible target dataset.',true);
     await navigate('cross');return;
    }
@@ -1010,7 +1029,21 @@ async function handleAction(action){switch(action){case 'import':return openImpo
  case 'graph-reset':state.graphUi={search:'',severity:'all',links:'all',zoom:1};$('#main').innerHTML=renderGraph();drawGraph(state.graph);return;
  case 'failure-reset':state.failureCell='';return updateFailureExplorer();
  case 'rankings':{state.rankingBudget=Number($('#rankingBudget')?.value||4);const target=$('#rankingResult');if(target)target.innerHTML='<div class="rank-pending" role="status">Comparing real candidate order…</div>';state.rankings=await api('/api/datasets/'+state.did+'/rankings?budget='+state.rankingBudget);if(target)target.innerHTML=renderRankings();return;}case 'filter-findings':state.activeFilters={kind:$('#findingKind')?.value||'',status:$('#findingStatus')?.value||''};state.findingPage=1;return render();case 'filter-samples':state.dnaFilters={split:$('#dnaSplit')?.value||'',label:$('#dnaLabel')?.value||'',search:$('#dnaSearch')?.value||''};state.sampleFilter=dnaFilterQuery(state.dnaFilters);state.samplePage=1;return render();
- case 'clear-sample-filters':state.dnaFilters={split:'',label:'',search:''};state.sampleFilter=dnaFilterQuery(state.dnaFilters);state.samplePage=1;return render();case 'go-audit':return navigate('audit');case 'go-review':return navigate('review');case 'go-privacy':return navigate('privacy');case 'baseline-launch':return launchExperiment('baseline',{seed:42});case 'shortcut':return launchExperiment('shortcut',{seed:42});case 'impact':return launchExperiment('impact',{seed:42});case 'counterfactual-launch':{const sid=$('#counterSample')?.value;if(!sid)return toast('Select a research image first',true);return launchExperiment('counterfactual',{sample_id:sid,strength:Number($('#counterfactualAmount')?.value||40)/100})}case 'cross-launch':{const did=$('#crossTarget')?.value;if(!did)return toast('Select a target dataset first',true);return launchExperiment('cross_dataset',{target_dataset_id:did})}case 'scenario-launch':return launchExperiment('scenario',{seed:Number($('#scenarioSeed').value),label_flip_rate:Number($('#scenarioRate').value)});case 'verify-integrity':{if(!state.did)return toast('Select a dataset first',true);try{const info=await api('/api/datasets/'+state.did+'/verify');const target=$('#integrityResults');if(target)target.innerHTML=`<div class="notice ${info.passed?'':'warning'}" style="margin-top:12px"><strong>${info.passed?'Integrity check passed':'Integrity check found issues'}</strong><p>Files checked: ${number(info.checked_files)} · Problems: ${number(info.problem_count)}</p><p class="fine">${esc((info.problems||[]).slice(0,5).map(p=>p.kind+': '+(p.sample_id||'manifest')).join('; ') || 'No recorded mismatches.')}</p></div>`;}catch(e){toast(e.message,true)}return;}case 'download-json':window.location.href='/api/datasets/'+state.did+'/report?format=json';return;case 'auth-prompt':openModal('Local access token',`<div class="field"><label for="authToken">MDF_ACCESS_TOKEN</label><input class="input" type="password" id="authToken" placeholder="Enter configured token"></div>${btn('Authenticate','save-token','btn-primary')}`);return;case 'save-token':storage.set('sessionStorage','mdf-token',$('#authToken').value);await api('/api/session',{method:'POST'});toast('Authenticated for this local session');return;default:toast('Unknown control: '+action,true)}}
+ case 'clear-sample-filters':state.dnaFilters={split:'',label:'',search:''};state.sampleFilter=dnaFilterQuery(state.dnaFilters);state.samplePage=1;return render();case 'go-audit':return navigate('audit');case 'go-review':return navigate('review');case 'go-privacy':return navigate('privacy');case 'baseline-launch':return launchExperiment('baseline',{seed:42});case 'shortcut':return launchExperiment('shortcut',{seed:42});case 'impact':return launchExperiment('impact',{seed:42});case 'counterfactual-launch':{const sid=$('#counterSample')?.value;if(!sid)return toast('Select a research image first',true);return launchExperiment('counterfactual',{sample_id:sid,strength:Number($('#counterfactualAmount')?.value||40)/100})}case 'cross-launch':{
+ const targetId=$('#crossTarget')?.value;if(!targetId)return toast('Select a target dataset first',true);
+ const target=state.crossReadiness?.targets?.find(item=>item.id===targetId);
+ const config={target_dataset_id:targetId};
+ if(target?.mapping_eligible){
+  const panel=[...document.querySelectorAll('[data-target-map]')].find(item=>item.dataset.targetMap===targetId);
+  if(!panel)return toast('The label-mapping panel is missing. Reload this workspace and try again.',true);
+  const fields=[...panel.querySelectorAll('[data-target-label]')],mapping={};
+  for(const field of fields){if(!field.value)return toast('Map every target label before running the comparison.',true);mapping[field.dataset.targetLabel]=field.value;}
+  if(new Set(Object.values(mapping)).size!==fields.length)return toast('Each target class must map to a different source class.',true);
+  if(!panel.querySelector('[data-target-map-confirm]')?.checked)return toast('Confirm that the one-to-one mapping is supported by the dataset documentation.',true);
+  config.target_label_mapping=mapping;config.label_mapping_confirmed=true;
+ }
+ return launchExperiment('cross_dataset',config)
+}case 'scenario-launch':return launchExperiment('scenario',{seed:Number($('#scenarioSeed').value),label_flip_rate:Number($('#scenarioRate').value)});case 'verify-integrity':{if(!state.did)return toast('Select a dataset first',true);try{const info=await api('/api/datasets/'+state.did+'/verify');const target=$('#integrityResults');if(target)target.innerHTML=`<div class="notice ${info.passed?'':'warning'}" style="margin-top:12px"><strong>${info.passed?'Integrity check passed':'Integrity check found issues'}</strong><p>Files checked: ${number(info.checked_files)} · Problems: ${number(info.problem_count)}</p><p class="fine">${esc((info.problems||[]).slice(0,5).map(p=>p.kind+': '+(p.sample_id||'manifest')).join('; ') || 'No recorded mismatches.')}</p></div>`;}catch(e){toast(e.message,true)}return;}case 'download-json':window.location.href='/api/datasets/'+state.did+'/report?format=json';return;case 'download-repro':window.location.href='/api/datasets/'+state.did+'/report?format=repro';return;case 'go-dna':return navigate('dna');case 'auth-prompt':openModal('Local access token',`<div class="field"><label for="authToken">MDF_ACCESS_TOKEN</label><input class="input" type="password" id="authToken" placeholder="Enter configured token"></div>${btn('Authenticate','save-token','btn-primary')}`);return;case 'save-token':storage.set('sessionStorage','mdf-token',$('#authToken').value);await api('/api/session',{method:'POST'});toast('Authenticated for this local session');return;default:toast('Unknown control: '+action,true)}}
 document.addEventListener('click',async e=>{
  const nav=e.target.closest('[data-view]');if(nav){navigate(nav.dataset.view);return}
  const act=e.target.closest('[data-action]');if(act){act.disabled=true;try{await handleAction(act.dataset.action)}catch(err){toast(err.message,true)}finally{if(act.isConnected)act.disabled=false}return}
@@ -1038,7 +1071,7 @@ document.addEventListener('change',e=>{
  if(e.target.id==='graphSeverity'){state.graphUi.severity=e.target.value;updateGraphExplorer()}
  if(e.target.id==='graphLinks'){state.graphUi.links=e.target.value;updateGraphExplorer()}
  if(e.target.id==='graphLayout'){state.graphUi.layout=e.target.value;updateGraphExplorer()}
- if(e.target.id==='counterfactualMode'){state.counterMode=e.target.value;updateCounterfactualPreview()}if(e.target.id==='counterSample'){const sample=state.samples?.items?.find(s=>s.id===e.target.value);if(sample){state.counterSampleId=sample.id;for(const id of ['counterOriginalImage','counterModifiedImage']){const el=$('#'+id);if(el)el.src=sample.image_url}updateCounterfactualPreview()}}});
+ if(e.target.id==='crossTarget'){document.querySelectorAll('[data-target-map]').forEach(panel=>{panel.hidden=panel.dataset.targetMap!==e.target.value})}if(e.target.id==='counterfactualMode'){state.counterMode=e.target.value;updateCounterfactualPreview()}if(e.target.id==='counterSample'){const sample=state.samples?.items?.find(s=>s.id===e.target.value);if(sample){state.counterSampleId=sample.id;for(const id of ['counterOriginalImage','counterModifiedImage']){const el=$('#'+id);if(el)el.src=sample.image_url}updateCounterfactualPreview()}}});
 $('#datasetSelect').addEventListener('change',e=>changeDataset(e.target.value));
 $('#menuToggle').addEventListener('click',()=>{$('#sidebar').classList.toggle('open');const opened=$('#sidebar').classList.contains('open');$('#mobileOverlay').hidden=!opened;$('#menuToggle').setAttribute('aria-expanded',String(opened))});
 $('#mobileOverlay').addEventListener('click',()=>{$('#sidebar').classList.remove('open');$('#mobileOverlay').hidden=true;$('#menuToggle').setAttribute('aria-expanded','false')});
