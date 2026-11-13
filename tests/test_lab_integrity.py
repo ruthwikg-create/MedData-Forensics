@@ -224,3 +224,18 @@ def test_dataset_modality_correction_requires_and_records_documentation_attestat
         assert body['attestation']['previous_modality']=='Other / unspecified'
         assert body['attestation']['source_documentation']=='Official dataset paper and provider README'
         assert body['dataset']['metadata']['modality_attestations'][-1]['confirmed_modality']=='Dermatoscopic / skin lesion images'
+
+def test_cross_dataset_blocks_known_dermamnist_ham10000_lineage():
+    with TestClient(app) as client:
+        source_id=client.post('/api/datasets/demo',json={'count':48,'seed':371}).json()['dataset_id']
+        target_id=client.post('/api/datasets/demo',json={'count':48,'seed':372}).json()['dataset_id']
+        with Session() as db:
+            source=db.get(Dataset,source_id);target=db.get(Dataset,target_id)
+            source.name='HAM10000'
+            target.name='DermaMNIST'
+            source.modality=target.modality='Dermatoscopic / skin lesion images'
+            db.commit()
+        readiness=client.get(f'/api/datasets/{source_id}/cross-dataset-readiness').json()
+        candidate=next(item for item in readiness['targets'] if item['id']==target_id)
+        assert candidate['selectable'] is False
+        assert any('derived from HAM10000' in reason for reason in candidate['reasons'])
