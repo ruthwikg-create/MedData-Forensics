@@ -112,7 +112,7 @@ def public_status(state):
 def status(session_id):
     with _MUTEX:
         state = _state(session_id)
-        if state['phase'] == 'processing' and state.get('pid') != os.getpid():
+        if state['phase'] in ('queued', 'processing') and state.get('pid') != os.getpid():
             state.update(phase='failed', error='Local server restarted during indexing. You can retry without re-uploading.',
                          message='Indexing was interrupted; original uploaded archives are retained.')
             _save(state)
@@ -161,7 +161,7 @@ def begin_processing(session_id):
             raise ValueError('This import is already queued, running, or complete')
         if any(row['received'] != row['size'] for row in state['files']):
             raise ValueError('Finish uploading every selected ZIP and metadata CSV before indexing')
-        state.update(phase='queued', error=None, message='Archives received; waiting for local indexing.')
+        state.update(phase='queued', pid=os.getpid(), error=None, message='Archives received; waiting for local indexing.')
         _save(state)
         return public_status(state)
 
