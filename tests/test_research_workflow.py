@@ -96,9 +96,11 @@ def test_cross_dataset(client,sandbox):
 def test_npz_and_zip_import(client):
     images=np.zeros((8,28,28,3),dtype='uint8');labels=np.array([[0],[1],[0],[1],[0],[1],[0],[1]])
     bio=io.BytesIO();np.savez_compressed(bio,train_images=images,train_labels=labels,val_images=images[:4],val_labels=labels[:4],test_images=images[:4],test_labels=labels[:4]);bio.seek(0)
-    r=client.post('/api/datasets/import',data={'name':'Small NPZ','source':'Generated test','license':'Test only','max_per_split':'20'},files={'file':('test.npz',bio,'application/octet-stream')})
+    r=client.post('/api/datasets/import',data={'name':'Small NPZ','source':'Generated test','license':'Test only','max_per_split':'20','modality':'Dermatoscopic / skin lesion images'},files={'file':('test.npz',bio,'application/octet-stream')})
     assert r.status_code==200,r.text
-    assert client.get('/api/datasets/'+r.json()['dataset_id']).json()['dataset']['sample_count']==16
+    npz_detail=client.get('/api/datasets/'+r.json()['dataset_id']).json()['dataset']
+    assert npz_detail['sample_count']==16
+    assert npz_detail['modality']=='Dermatoscopic / skin lesion images'
     bio=io.BytesIO()
     with zipfile.ZipFile(bio,'w') as z:
         pic=io.BytesIO();Image.new('RGB',(28,28),'blue').save(pic,format='PNG');z.writestr('images/one.png',pic.getvalue())
