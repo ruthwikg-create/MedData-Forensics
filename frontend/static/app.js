@@ -597,6 +597,10 @@ function renderImpact(){
  const {html,e}=labBase('INTERVENTION ANALYSIS','Audit Impact Simulator','Compare frozen-test performance before and after removing reviewer-confirmed training samples.','impact','Run removal-only ablation');
  if(!state.detail)return html;
  const r=state.impactReadiness||{ready:false,reasons:['Checking the evidence and training split…']};
+ if(!r.ready){
+  const launchButton='<button type="button" class="btn btn-primary" data-action="impact">'+icon('play')+' Run removal-only ablation</button>';
+  html=html.replace(launchButton,'<button type="button" class="btn btn-primary" disabled aria-disabled="true">'+icon('lock')+' Complete prerequisites first</button>');
+ }
  const last=r.last_attempt;
  const status=r.ready?pill('Ready to run','green'):pill('Prerequisites missing','amber');
  const previousFailure=last?.status==='failed'?
