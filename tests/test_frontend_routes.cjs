@@ -383,3 +383,48 @@ test('Impact Simulator shows evidence prerequisites and prior failure instead of
  assert.ok(html.includes('Eligible evidence types'));
  assert.ok(!html.includes('Baseline macro-F1'));
 });
+
+test('Cross-Dataset Lab exposes an explicit one-to-one label mapping when vocabularies differ',()=>{
+ const html=vm.runInContext(`
+  state.did='source';state.detail={dataset:{id:'source',name:'Source'},experiments:[
+   {kind:'baseline',status:'completed',checkpoint_available:true}
+  ]};
+  state.crossReadiness={source:{training_labels:['akiec','bcc','mel']},baseline_ready:true,
+   targets:[{id:'target',name:'Target numeric labels',sample_count:90,modality:'Dermatoscopic images',
+    labels:['0','1','2'],test_count:20,compatible:false,mapping_eligible:true,
+    label_mapping_required:true,selectable:true,reasons:[]}]};
+  renderCross()
+ `,ctx);
+ assert.ok(html.includes('Needs explicit mapping'));
+ assert.ok(html.includes('data-target-map="target"'));
+ assert.ok(html.includes('data-target-label="0"'));
+ assert.ok(html.includes('value="akiec"'));
+ assert.ok(html.includes('data-target-map-confirm'));
+ assert.ok(html.includes('data-action="cross-launch"'));
+});
+
+test('Failure Explorer disables baseline training when preflight blockers exist',()=>{
+ const html=vm.runInContext(`
+  state.detail={dataset:{id:'d',name:'Small data'},experiments:[]};
+  state.baselineReadiness={ready:false,train_count:10,test_count:0,training_class_counts:{a:10},
+   reasons:['At least 20 decodable training images are needed.'],warnings:[],last_attempt:null};
+  renderFailures()
+ `,ctx);
+ assert.ok(html.includes('Resolve prerequisites first'));
+ assert.ok(html.includes('disabled aria-disabled="true"'));
+ assert.ok(html.includes('At least 20 decodable training images are needed.'));
+ assert.ok(!html.includes('data-action="baseline-launch"'));
+ assert.ok(html.includes('data-action="go-dna"'));
+});
+
+test('Reproducibility offers an immediate bundle export and file verification without requiring prior experiments',()=>{
+ const html=vm.runInContext(`
+  state.detail={dataset:{id:'d',name:'Research data',manifest_hash:'abc123',synthetic:false},experiments:[]};
+  renderRepro()
+ `,ctx);
+ assert.ok(html.includes('data-action="download-repro"'));
+ assert.ok(html.includes('data-action="verify-integrity"'));
+ assert.ok(html.includes('You can verify hashes and export a reproducibility bundle immediately.'));
+ assert.ok(html.includes('No experiment records'));
+ assert.ok(html.includes('format=repro'));
+});
