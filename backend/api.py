@@ -13,7 +13,7 @@ from pydantic import BaseModel,Field
 from sqlalchemy import select,func
 from .db import Session,DATA_ROOT,ARTIFACT_ROOT,Dataset,Sample,Finding,Review,AuditRun,Experiment,Job,jd,jl,now
 from .security import safe_path,extract_auth,MAX_ARCHIVE_BYTES,MAX_NPZ_BYTES,sha_file,manifest_hash
-from .ingest import demo_dataset,import_zip,import_npz
+from .ingest import demo_dataset,import_zip,import_npz,SUPPORTED_MODALITIES
 from .large_import import CHUNK_BYTES,create_session,append_chunk,begin_processing,process_session,discard_session,status as large_import_status
 from .analysis_engine import forensic_graph,ranking_comparison
 from .labs import EXPERIMENT_RUNNERS,impact_readiness as lab_impact_readiness
@@ -169,6 +169,8 @@ class LargeImportStart(BaseModel):
 def initialize_large_import(payload: LargeImportStart):
     """Initialize a disk-backed upload rather than buffering >1 GB in an HTTP form."""
     try:
+        if payload.modality not in SUPPORTED_MODALITIES:
+            raise ValueError('Choose a supported imaging modality before starting the import')
         record = create_session(payload.name,payload.source,payload.license,payload.modality,
                                 [entry.model_dump() for entry in payload.files],payload.max_per_split)
         return {**record,'chunk_bytes':CHUNK_BYTES}
@@ -281,11 +283,7 @@ def _baseline_readiness(db,did):
 
 @app.patch('/api/datasets/{did}/modality')
 def confirm_dataset_modality(did:str,payload:ModalityConfirmation):
-    allowed={
-        'Dermatoscopic / skin lesion images','Histopathology / microscopy',
-        'Radiology / X-ray','Ultrasound','MRI','CT',
-        'Fundus / retinal images','Other / unspecified'
-    }
+    allowed=SUPPORTED_MODALITIES
     if payload.confirmed is not True:
         raise HTTPException(422,'Confirm that the modality was checked against the original dataset documentation.')
     if payload.modality not in allowed:
