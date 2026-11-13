@@ -128,8 +128,8 @@ test('access token panel explains that localhost does not require a token by def
 test('evidence graph displays linked findings as accessible, scrollable node cards',()=>{
  const html=vm.runInContext("state.detail={dataset:{id:'demo',name:'Research set'}};state.graph={audit_completed:true,network_mode:'evidence',finding_count:1,nodes:[{id:'s:s1',label:'image-1',type:'sample',split:'train'},{id:'f:f1',label:'split leakage',type:'finding',status:'suspected'}],edges:[{source:'f:f1',target:'s:s1'}],note:'Detector evidence only'};renderGraph()",ctx);
  assert.ok(html.includes('id="nodeGraph"'));
- assert.ok(html.includes('scroll to explore nodes'));
- assert.ok(html.includes('1 detector-evidence links'));
+ assert.ok(html.includes('Audited evidence network'));
+ assert.ok(html.includes('1 evidence connections'));
  const box={innerHTML:'',querySelectorAll:()=>[]};
  ctx.document.querySelector=s=>s==='#nodeGraph'?box:null;
  vm.runInContext("drawGraph(state.graph)",ctx);
