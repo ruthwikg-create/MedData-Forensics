@@ -24,7 +24,8 @@ def _model(train,seed=42,max_train=2400):
     train=train[:max_train]
     if len(train)<20 or len(set(x.label for x in train))<2:raise ValueError('Requires >=20 training images and >=2 classes')
     counts=Counter(x.label for x in train)
-    if min(counts.values())<3:raise ValueError('Insufficient samples per class')
+    # A rare class with one or two samples is allowed for a diagnostic software smoke test.
+    # Such a model is NOT validated or reliable; prominently report low support below.
     x=np.vstack([extract_features(safe_path(s.relpath)) for s in train]);y=np.array([s.label for s in train]);
     model=LogisticRegression(max_iter=500,class_weight='balanced',solver='lbfgs',random_state=seed)
     model.fit(x,y)
@@ -164,8 +165,16 @@ def run_baseline(exp_id,progress=None):
         if progress:progress(15,'Extracting CPU-friendly HOG and color features')
         safe_validation,safe_test,integrity=_evaluation_integrity(train,validation,test)
         model=_model(train,seed)
+        class_counts=Counter(s.label for s in train)
+        training_warnings=[]
+        if min(class_counts.values())<3:
+            training_warnings.append('Some training classes contain fewer than 3 samples. Results are highly unstable; obtain more independently labeled examples before making research claims.')
+        if any(s.label not in class_counts for s in safe_test):
+            training_warnings.append('Held-out test includes labels absent from training; those classes cannot be predicted by this baseline.')
+        if len(safe_test)<20:
+            training_warnings.append('Fewer than 20 independent test records remain after leakage screening. Performance intervals will be unstable.')
         if progress:progress(63,'Evaluating only provenance-screened validation and test partitions')
-        outcome={'validation':_score(model,safe_validation,seed) if safe_validation else None,'test':_score(model,safe_test,seed),
+        outcome={'training_class_counts':dict(class_counts),'training_warnings':training_warnings,'validation':_score(model,safe_validation,seed) if safe_validation else None,'test':_score(model,safe_test,seed),
            'data_quality_warnings':_check_group_leakage(samples),'evaluation_integrity':integrity,
            'train_n':len(train),'test_n':len(safe_test),'validation_n':len(safe_validation),
            'method':'Logistic regression on HOG + downsized RGB; no GPU, no diagnostic claims','baseline':True}

@@ -236,3 +236,15 @@
 .graph-scroll-hint{font-size:12px;line-height:1.6;color:var(--muted);margin:5px 0 12px}
 .graph-card[role="button"]{cursor:pointer}
 .graph-card[role="button"]:focus-visible{outline:3px solid var(--teal);outline-offset:2px}
+
+
+/* Research baseline readiness: compact, readable, accessible on Windows and mobile. */
+.baseline-readiness{display:grid;gap:12px}
+.baseline-readiness-top{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+.baseline-class-list{display:flex;gap:8px;flex-wrap:wrap}
+.baseline-class{padding:6px 10px;border:1px solid var(--border);border-radius:7px;background:var(--surface);font-size:12px;color:var(--ink)}
+.baseline-messages{color:var(--ink);font-size:13px}
+.baseline-messages ul{margin:7px 0 0;padding-left:22px;line-height:1.65}
+.baseline-last-error{border-left:3px solid var(--red);padding:12px 14px;background:var(--surface);border-radius:6px;font-size:13px;overflow-wrap:anywhere}
+.baseline-last-error p{margin:6px 0 0}
+@media(max-width:550px){.baseline-readiness-top{align-items:flex-start;flex-direction:column}}
