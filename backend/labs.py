@@ -51,47 +51,99 @@ def _pred(model,samples):
 
 
 def _evaluation_integrity(train, validation, test):
-    """Retain only evaluation records whose available provenance does not overlap earlier splits.
+    """Exclude entire cross-split identity components, including transitive links.
 
-    This does not establish patient independence if trustworthy group metadata is absent.
-    Fail closed if no independent held-out test observations remain.
+    A sample can bridge otherwise different groups or image hashes. Checking
+    each record against only the immediately preceding split misses such
+    links and can produce misleading held-out performance. Within a split,
+    pixel-identical images are also counted just once in evaluation metrics.
+    Different images from one patient are retained for cluster bootstrap.
     """
     from .analysis_engine import pixel_fingerprint
-    ordered=list(train)+list(validation)+list(test)
-    tokens={}
-    for sample in ordered:
-        values=set()
+    ordered = list(train) + list(validation) + list(test)
+    parent = list(range(len(ordered)))
+    sizes = [1] * len(ordered)
+    tokens = []
+    pixel_identities = []
+    owners = {}
+
+    def root(index):
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    def join(a, b):
+        a, b = root(a), root(b)
+        if a == b:
+            return
+        if sizes[a] < sizes[b]:
+            a, b = b, a
+        parent[b] = a
+        sizes[a] += sizes[b]
+
+    for index, sample in enumerate(ordered):
+        values = set()
         if sample.group_id:
-            values.add(('group',sample.group_type or 'unspecified',sample.group_id))
-        if sample.sha256:values.add(('file_sha256',sample.sha256))
-        # Audit may not have run. Pixel hashes also catch identical images
-        # re-encoded with different file bytes.
-        px=sample.pixelhash or pixel_fingerprint(safe_path(sample.relpath))
-        values.add(('pixel_sha256',px))
-        tokens[sample.id]=values
-    occupied=set().union(*(tokens[x.id] for x in train)) if train else set()
-    keep_validation=[];excluded_validation=[]
-    for x in validation:
-        if tokens[x.id]&occupied:excluded_validation.append(x.sample_id)
-        else:keep_validation.append(x)
-    occupied|=set().union(*(tokens[x.id] for x in keep_validation)) if keep_validation else set()
-    keep_test=[];excluded_test=[]
-    for x in test:
-        if tokens[x.id]&occupied:excluded_test.append(x.sample_id)
-        else:keep_test.append(x)
+            values.add(('group', sample.group_type or 'unspecified', sample.group_id))
+        if sample.sha256:
+            values.add(('file_sha256', sample.sha256))
+        px = sample.pixelhash or pixel_fingerprint(safe_path(sample.relpath))
+        pixel_identities.append(px)
+        values.add(('pixel_sha256', px))
+        tokens.append(values)
+        for token in values:
+            if token in owners:
+                join(index, owners[token])
+            else:
+                owners[token] = index
+
+    n_train, n_val = len(train), len(validation)
+    train_components = {root(i) for i in range(n_train)}
+    val_components = {root(i) for i in range(n_train, n_train + n_val)}
+    forbidden_test = train_components | val_components
+    keep_validation, keep_test = [], []
+    excluded_validation, excluded_test = [], []
+    duplicates_validation, duplicates_test = [], []
+    seen_val_pixels, seen_test_pixels = set(), set()
+    for index in range(n_train, n_train + n_val):
+        sample = ordered[index]
+        if root(index) in train_components:
+            excluded_validation.append(sample.sample_id)
+        elif pixel_identities[index] in seen_val_pixels:
+            duplicates_validation.append(sample.sample_id)
+        else:
+            keep_validation.append(sample)
+            seen_val_pixels.add(pixel_identities[index])
+    for index in range(n_train + n_val, len(ordered)):
+        sample = ordered[index]
+        if root(index) in forbidden_test:
+            excluded_test.append(sample.sample_id)
+        elif pixel_identities[index] in seen_test_pixels:
+            duplicates_test.append(sample.sample_id)
+        else:
+            keep_test.append(sample)
+            seen_test_pixels.add(pixel_identities[index])
     if not keep_test:
         raise ValueError('No leakage-screened independent test records remain; correct dataset partitions before evaluating')
-    meta={'method':'cross-split exact file hash, decoded-pixel hash and declared group identifiers',
-          'train_n':len(train),'validation_original_n':len(validation),'validation_retained_n':len(keep_validation),
-          'test_original_n':len(test),'test_retained_n':len(keep_test),
-          'excluded_validation_sample_ids':excluded_validation[:100],
-          'excluded_test_sample_ids':excluded_test[:100],
-          'excluded_validation_n':len(excluded_validation),'excluded_test_n':len(excluded_test),
-          'group_ids_missing_n':sum(not x.group_id for x in ordered),
-          'limitations':['Available metadata cannot establish patient independence when patient identifiers are absent.',
-             'Near duplicates and acquisition-level correlations may remain; run the forensic audit and document test-set provenance.',
-             'Leakage filtering was based solely on identity and recorded metadata, never test labels or performance.']}
-    return keep_validation,keep_test,meta
+    meta = {
+        'method': 'transitive cross-split identity components from file hashes, decoded pixels and declared group identifiers; one vote per unique image within each evaluation split',
+        'train_n': n_train, 'validation_original_n': n_val, 'validation_retained_n': len(keep_validation),
+        'test_original_n': len(test), 'test_retained_n': len(keep_test),
+        'excluded_validation_sample_ids': (excluded_validation + duplicates_validation)[:100],
+        'excluded_test_sample_ids': (excluded_test + duplicates_test)[:100],
+        'excluded_validation_n': len(excluded_validation) + len(duplicates_validation),
+        'excluded_test_n': len(excluded_test) + len(duplicates_test),
+        'duplicate_validation_n': len(duplicates_validation), 'duplicate_test_n': len(duplicates_test),
+        'group_ids_missing_n': sum(not x.group_id for x in ordered),
+        'limitations': [
+            'Available metadata cannot establish patient independence when patient identifiers are absent.',
+            'Near duplicates and acquisition-level correlations may remain; run the forensic audit and document test-set provenance.',
+            'Leakage filtering was based solely on identity and recorded metadata, never test labels or performance.',
+            'Repeated identical evaluation images are not treated as independent observations.'
+        ]
+    }
+    return keep_validation, keep_test, meta
 
 
 def _cluster_bootstrap_metrics(y, pred, sample_rows, labels, seed=42, repetitions=300):
@@ -492,7 +544,7 @@ def run_scenario(exp_id,progress=None):
         e=db.get(Experiment,exp_id);source,samples=_load(db,e.dataset_id);cfg=jl(e.config)
         if len(samples)<20:raise ValueError('Need at least 20 images')
         seed=int(cfg.get('seed',42));rate=float(cfg.get('label_flip_rate',.08))
-        if rate<.01 or rate>.3:raise ValueError('Flip rate 0.01–0.30')
+        if not np.isfinite(rate) or not .01<=rate<=.3:raise ValueError('Flip rate 0.01–0.30')
         labels=sorted(set(s.label for s in samples))
         if len(labels)<2:raise ValueError('At least 2 classes required')
         rng=random.Random(seed);train=[s for s in samples if s.split=='train'];choices=rng.sample(train,max(1,int(len(train)*rate)))
