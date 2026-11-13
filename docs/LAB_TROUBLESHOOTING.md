@@ -51,6 +51,9 @@ A shortcut-sensitivity result uses the baseline's leakage-screened held-out test
 
 ## Using the four research workspaces
 
+**Import modality matters:** Choose the real acquisition type when importing a dataset. `Biomedical 2D image` and `Other / unspecified` are deliberately not accepted as evidence of modality compatibility. For example, choose `Dermatoscopic / skin lesion images` for HAM10000 and DermaMNIST, and `Histopathology / microscopy` for PathMNIST. Re-import older collections whose modality is generic; do not relabel a dataset merely to bypass a compatibility check.
+
+
 - **Cross-Dataset Lab:** select a source dataset, train its baseline, and import a second independent dataset. Exact class names can be used directly. If class names differ but the class counts match, the mapping panel requires a documented one-to-one mapping and an explicit researcher confirmation. Modality mismatch, missing target test split, exact hashes or decoded-pixel duplicates still block the comparison. Use **Create two synthetic collections to test this lab** only to verify the software workflow; those collections are not biomedical data.
 - **Impact Simulator:** run a completed audit, open Review Center, inspect a supported finding linked to a training image, and record a reasoned confirmation only when the evidence warrants it. If no eligible issue exists, the experiment correctly remains unavailable. The **Create synthetic test dataset** action creates a separate sandbox with planted software-test defects; review its findings manually rather than auto-confirming them.
 - **Failure Explorer:** check the Baseline readiness panel first. If it reports blockers, fix the split, sample-count or class-support issue before training. A completed experiment record without its saved checkpoint is not enough; retrain if the panel says the checkpoint is missing.
