@@ -46,6 +46,11 @@ def manifest_hash(rows):
 def extract_auth(request):
     # Local workstation only; optional secret for LAN access. Bind 127.0.0.1 by default.
     token=os.getenv('MDF_ACCESS_TOKEN','')
+    # Never allow unauthenticated access when explicitly binding beyond loopback.
+    # The local single-user workflow remains passwordless on 127.0.0.1.
+    host=os.getenv('MDF_HOST','127.0.0.1').strip().lower()
+    if not token and host not in ('127.0.0.1','localhost','::1'):
+        return False
     if token:
         candidate=request.headers.get('X-MDF-Token','') or request.cookies.get('mdf_access','')
         if not secrets.compare_digest(candidate,token): return False
