@@ -35,7 +35,7 @@ const pct=x=>x==null?'—':(Number(x)*100).toFixed(1)+'%';
 const number=x=>Number(x||0).toLocaleString('en-US');
 const short=x=>String(x||'').length>24?String(x).slice(0,12)+'…'+String(x).slice(-8):String(x||'');
 const title=s=>s.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
-const state={view:'overview',datasets:[],did:'',detail:null,overview:null,findings:null,analysisJob:null,activeFilters:{kind:'',status:''},samplePage:1,counterPage:1,counterStrength:40,counterMode:'brightness',reviewPage:1,modal:null,graphUi:{search:'',severity:'all',links:'all',zoom:1},failureCell:'',dnaFilters:{split:'',label:'',search:''}};
+const state={view:'overview',datasets:[],did:'',detail:null,overview:null,findings:null,analysisJob:null,activeFilters:{kind:'',status:''},samplePage:1,counterPage:1,counterStrength:40,counterMode:'brightness',reviewPage:1,modal:null,graphUi:{search:'',severity:'all',links:'all',layout:'network',zoom:1},failureCell:'',dnaFilters:{split:'',label:'',search:''}};
 let lastFocused=null, refreshTimer=null;
 async function api(path,opt={}){
   const headers={...(opt.headers||{})}; const token=storage.get('sessionStorage','mdf-token');if(token)headers['X-MDF-Token']=token;
@@ -262,7 +262,7 @@ function renderGraphExplorerResults(graph){
     (view.edges.length?'Scroll to inspect real linked images and findings. Select a node for the underlying evidence.':
     'No detector-supported links in this selection. These are isolated real dataset nodes, not fabricated relationships.')+'</div>'+
     '<div id="nodeGraph" class="node-graph" role="region" tabindex="0" aria-label="Interactive evidence graph; scroll to explore"></div>'+
-    '<p class="fine graph-canvas-footnote">Diagram previews up to 14 findings and 28 image records. '+number(view.nodes.length)+
+    '<p class="fine graph-canvas-footnote">Interactive diagram previews up to 14 findings and 28 image records. Switch between evidence network and trace layouts. '+number(view.nodes.length)+
     ' matched records are available through the filters and evidence index. Edges are detector observations, not confirmed patient identity.</p>'+listing;
 }
 function updateGraphExplorer(){
@@ -296,6 +296,8 @@ function renderGraph(){
    'placeholder="Sample ID, finding, split…" value="'+esc(ui.search||'')+'"></label>'+
    '<label class="graph-field"><span>Severity</span><select class="select" id="graphSeverity">'+
    [['all','All severities'],['critical','Critical'],['high','High'],['medium','Medium'],['low','Low']].map(([v,l])=>graphOption(v,ui.severity,l)).join('')+
+   '</select></label><label class="graph-field"><span>Layout</span><select class="select" id="graphLayout">'+
+   [['network','Evidence network'],['columns','Two-column trace']].map(([v,l])=>graphOption(v,ui.layout||'network',l)).join('')+
    '</select></label><label class="graph-field"><span>Connections</span><select class="select" id="graphLinks">'+
    [['all','All real records'],['linked','Linked only'],['unlinked','Unlinked only']].map(([v,l])=>graphOption(v,ui.links,l)).join('')+
    '</select></label><div class="graph-zoom-controls"><span class="graph-zoom-label">Zoom</span><div class="graph-zoom-buttons">'+
@@ -472,7 +474,7 @@ const RENDER={overview:renderOverview,dna:renderDNA,audit:renderAudit,graph:rend
 async function render(){try{$('#main').innerHTML='<div class="loading-screen"><div class="spinner"></div><p>Loading research evidence…</p></div>';await loadView();$('#crumbCurrent').textContent=({dna:'Dataset DNA',audit:'Forensic Audit',graph:'Evidence Graph',review:'Review Center',shortcut:'Shortcut Inspector',counterfactual:'Counterfactual Lab',cross:'Cross-Dataset Lab',impact:'Impact Simulator',failures:'Failure Explorer',repro:'Reproducibility',privacy:'Privacy & Integrity'})[state.view]||'Overview';const rendered=(RENDER[state.view]||renderOverview)();if(typeof rendered!=='string'||!rendered.trim())throw Error('The '+state.view+' workspace did not render correctly.');$('#main').innerHTML=rendered;document.querySelectorAll('.nav-link').forEach(b=>b.classList.toggle('active',b.dataset.view===state.view));if(state.view==='graph'&&state.graph?.nodes?.length)drawGraph(state.graph);if(state.view==='counterfactual'&&state.samples?.items?.length)updateCounterfactualPreview();}catch(e){renderError(e)}}
 async function refresh(full=true){try{if(full)await loadCore();await render()}catch(e){renderError(e)}}
 async function navigate(view){state.view=RENDER[view]?view:'overview';window.location.hash='#/'+state.view;$('#sidebar').classList.remove('open');$('#mobileOverlay').hidden=true;$('#menuToggle').setAttribute('aria-expanded','false');state.findingPage=1;await render();$('#main')?.focus({preventScroll:true});window.scrollTo({top:0,behavior:'instant'})}
-async function changeDataset(did){state.did=did;storage.set('localStorage','mdf-dataset',did);state.activeFilters={kind:'',status:''};state.samplePage=1;state.counterPage=1;state.findingPage=1;state.sampleFilter='';state.counterSampleId=null;state.counterStrength=40;state.counterMode='brightness';state.samples=null;state.findings=null;state.graph=null;state.rankings=null;state.baselineReadiness=null;state.graphUi={search:'',severity:'all',links:'all',zoom:1};state.failureCell='';state.dnaFilters={split:'',label:'',search:''};await refresh(true);toast('Research dataset selected.');}
+async function changeDataset(did){state.did=did;storage.set('localStorage','mdf-dataset',did);state.activeFilters={kind:'',status:''};state.samplePage=1;state.counterPage=1;state.findingPage=1;state.sampleFilter='';state.counterSampleId=null;state.counterStrength=40;state.counterMode='brightness';state.samples=null;state.findings=null;state.graph=null;state.rankings=null;state.baselineReadiness=null;state.graphUi={search:'',severity:'all',links:'all',layout:'network',zoom:1};state.failureCell='';state.dnaFilters={split:'',label:'',search:''};await refresh(true);toast('Research dataset selected.');}
 function drawGraph(graph){
  const box=$('#nodeGraph');if(!box)return;
  const visible=graphVisibleData(graph);
@@ -494,9 +496,22 @@ function drawGraph(graph){
  }
  const baseWidth=950,baseHeight=Math.max(340,Math.max(shownFindings.length,shownSamples.length)*68+96);
  const zoom=Math.min(1.5,Math.max(0.75,Number(state.graphUi?.zoom)||1));
+ const layout=state.graphUi?.layout==='columns'?'columns':'network';
  const position={};
- const place=(items,x)=>items.forEach((node,index)=>{position[node.id]={x,y:52+(index+.5)*(baseHeight-110)/Math.max(1,items.length)}});
- place(shownSamples,210);place(shownFindings,720);
+ if(layout==='columns'){
+  const place=(items,x)=>items.forEach((node,index)=>{position[node.id]={x,y:52+(index+.5)*(baseHeight-110)/Math.max(1,items.length)}});
+  place(shownSamples,210);place(shownFindings,720);
+ }else{
+  // Separate evidence groups visually; edges remain exclusively API-provided.
+  const ring=(items,cx,cy,rx,ry,begin,end)=>{
+   items.forEach((node,i)=>{
+    const angle=begin+(end-begin)*(i+.5)/Math.max(1,items.length);
+    position[node.id]={x:cx+rx*Math.cos(angle),y:cy+ry*Math.sin(angle)};
+   });
+  };
+  ring(shownSamples,265,baseHeight/2,105,Math.max(130,baseHeight/2-70),Math.PI/2,3*Math.PI/2);
+  ring(shownFindings,685,baseHeight/2,105,Math.max(130,baseHeight/2-70),-Math.PI/2,Math.PI/2);
+ }
  const edges=displayedEdges.map(edge=>{
    const left=position[edge.target],right=position[edge.source];
    if(!left||!right)return '';
@@ -722,6 +737,7 @@ document.addEventListener('input',e=>{if(e.target.id==='counterfactualAmount'){s
 document.addEventListener('change',e=>{
  if(e.target.id==='graphSeverity'){state.graphUi.severity=e.target.value;updateGraphExplorer()}
  if(e.target.id==='graphLinks'){state.graphUi.links=e.target.value;updateGraphExplorer()}
+ if(e.target.id==='graphLayout'){state.graphUi.layout=e.target.value;updateGraphExplorer()}
  if(e.target.id==='counterfactualMode'){state.counterMode=e.target.value;updateCounterfactualPreview()}if(e.target.id==='counterSample'){const sample=state.samples?.items?.find(s=>s.id===e.target.value);if(sample){state.counterSampleId=sample.id;for(const id of ['counterOriginalImage','counterModifiedImage']){const el=$('#'+id);if(el)el.src=sample.image_url}updateCounterfactualPreview()}}});
 $('#datasetSelect').addEventListener('change',e=>changeDataset(e.target.value));
 $('#menuToggle').addEventListener('click',()=>{$('#sidebar').classList.toggle('open');const opened=$('#sidebar').classList.contains('open');$('#mobileOverlay').hidden=!opened;$('#menuToggle').setAttribute('aria-expanded',String(opened))});
