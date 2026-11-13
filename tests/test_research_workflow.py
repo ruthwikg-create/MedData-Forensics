@@ -88,7 +88,7 @@ def test_cross_dataset(client,sandbox):
     source=client.post(f'/api/datasets/{sandbox}/experiments',json={'kind':'baseline','config':{}}).json()
     run_job(client,source['job_id'])
     target=client.post('/api/datasets/demo',json={'seed':77,'count':64}).json()['dataset_id']
-    resp=client.post(f'/api/datasets/{sandbox}/experiments',json={'kind':'cross_dataset','config':{'target_dataset_id':target}}).json()
+    resp=client.post(f'/api/datasets/{sandbox}/experiments',json={'kind':'cross_dataset','config':{'target_dataset_id':target,'independence_confirmed':True}}).json()
     run_job(client,resp['job_id'])
     output=client.get('/api/experiments/'+resp['experiment_id']).json()
     assert output['result']['external_test']['metrics']['n']>0
