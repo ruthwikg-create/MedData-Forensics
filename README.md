@@ -12,16 +12,16 @@ MedData Forensics imports image classification datasets, identifies potential da
 
 ## Reliability repairs — November 13, 2026
 
-The current \`main\` branch includes additional tested reliability patches after v0.9.2:
+The current `main` branch includes additional tested reliability patches after v0.9.2:
 
-- **Baseline readiness:** Model Failure Explorer now reports train/test counts, observed class support, reasons that training cannot start, low-support cautions, and the latest baseline job error. A completed database record without its \`baseline.joblib\` file does not unlock dependent experiments.
+- **Baseline readiness:** Model Failure Explorer now reports train/test counts, observed class support, reasons that training cannot start, low-support cautions, and the latest baseline job error. A completed database record without its `baseline.joblib` file does not unlock dependent experiments.
 - **Sorted, imbalanced NPZ datasets:** subset import now chooses a deterministic, class-preserving selection instead of blindly importing the first N records. Source array indices and source/selected class counts are recorded. Sampling changes class prevalence and is not equivalent to full-dataset evaluation.
 - **Rare-class smoke tests:** the CPU classifier can fit when a class has only one or two training examples, but the result prominently warns about severe uncertainty. At least 20 training records, two classes, and independent test records are still required.
 - **Shortcuts and external comparisons:** shortcut sensitivity uses the baseline's leakage-screened test cohort. Cross-dataset experiments block both identical file bytes and pixel-identical re-encodings.
 - **Evidence graph:** readable interactive node cards replace compressed line-only visualizations, with explicit labels for unlinked records.
 - **Regression tests:** separate Linux research and Windows software-acceptance workflows passed on these patches. This does not prove reliability on a particular user's computer or establish clinical validity.
 
-**If you imported an NPZ before the class-preserving sampling fix, re-import it as a new dataset** to apply the new selection. The previous dataset remains unchanged. After cloning from GitHub, stop the old server, run \`git pull origin main\`, restart \`RUN_ME_WINDOWS.bat\`, and force-refresh the browser (\`Ctrl+Shift+R\`). ZIP-extracted folders are not Git clones and cannot receive \`git pull\` updates.
+**If you imported an NPZ before the class-preserving sampling fix, re-import it as a new dataset** to apply the new selection. The previous dataset remains unchanged. After cloning from GitHub, stop the old server, run `git pull origin main`, restart `RUN_ME_WINDOWS.bat`, and force-refresh the browser (`Ctrl+Shift+R`). ZIP-extracted folders are not Git clones and cannot receive `git pull` updates.
 
 ### Reproduction checklist
 
@@ -30,7 +30,7 @@ The current \`main\` branch includes additional tested reliability patches after
 3. Open **Model Failure Explorer**, read **Baseline readiness**, then run baseline training; check the exact error if it fails.
 4. Run Shortcut Inspector or Counterfactual Lab only after the baseline checkpoint is present.
 5. Cross-Dataset Lab needs a separate, compatible collection without image overlap. Impact Simulator needs confirmed training-sample findings.
-6. Run \`powershell -ExecutionPolicy Bypass -File .\scripts\Test-Windows.ps1\` from the project root to test your own Python environment. This command uses the local virtual environment; no GPU, Docker, or paid API is required.
+6. Run `powershell -ExecutionPolicy Bypass -File .\scripts\Test-Windows.ps1` from the project root to test your own Python environment. This command uses the local virtual environment; no GPU, Docker, or paid API is required.
 
 
 ## What changed in v0.9.2
