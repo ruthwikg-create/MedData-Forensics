@@ -16,7 +16,7 @@ from .security import safe_path,extract_auth,MAX_ARCHIVE_BYTES,MAX_NPZ_BYTES,sha
 from .ingest import demo_dataset,import_zip,import_npz
 from .large_import import CHUNK_BYTES,create_session,append_chunk,begin_processing,process_session,discard_session,status as large_import_status
 from .analysis_engine import forensic_graph,ranking_comparison
-from .labs import EXPERIMENT_RUNNERS
+from .labs import EXPERIMENT_RUNNERS,impact_readiness as lab_impact_readiness
 from .worker import loop
 
 stop=threading.Event()
@@ -280,6 +280,82 @@ def baseline_readiness(did:str):
         get_dataset(db,did)
         return _baseline_readiness(db,did)
 
+
+def _cross_dataset_readiness(db,did):
+    source=get_dataset(db,did)
+    source_rows=db.scalars(select(Sample).where(Sample.dataset_id==did)).all()
+    source_train_labels={sample.label for sample in source_rows if sample.split=='train'}
+    source_hashes={sample.sha256 for sample in source_rows if sample.sha256}
+    source_pixels={sample.pixelhash for sample in source_rows if sample.pixelhash}
+    baselines=db.scalars(select(Experiment).where(
+        Experiment.dataset_id==did,Experiment.kind=='baseline',Experiment.status=='completed'
+    ).order_by(Experiment.created_at.desc())).all()
+    baseline_ready=any((ARTIFACT_ROOT/item.id/'baseline.joblib').is_file() for item in baselines)
+    targets=[]
+    for target in db.scalars(select(Dataset).where(Dataset.id!=did).order_by(Dataset.created_at.desc())).all():
+        rows=db.scalars(select(Sample).where(Sample.dataset_id==target.id)).all()
+        labels={sample.label for sample in rows}
+        reasons=[]
+        if not rows:
+            reasons.append('This collection has no imported image records.')
+        if source.modality!=target.modality:
+            reasons.append('Declared modality does not match the source collection.')
+        if source_train_labels!=labels:
+            missing=sorted(source_train_labels-labels)
+            extra=sorted(labels-source_train_labels)
+            details=[]
+            if missing:details.append('missing '+', '.join(missing[:8]))
+            if extra:details.append('extra '+', '.join(extra[:8]))
+            reasons.append('Complete label vocabulary does not match ('+'; '.join(details)+').')
+        if not any(sample.split=='test' for sample in rows):
+            reasons.append('The target collection has no held-out test partition.')
+        target_hashes={sample.sha256 for sample in rows if sample.sha256}
+        hash_overlap=len(source_hashes & target_hashes)
+        if hash_overlap:
+            reasons.append(f'{hash_overlap} target image(s) share exact file hashes with the source.')
+        target_pixels={sample.pixelhash for sample in rows if sample.pixelhash}
+        pixel_overlap=len(source_pixels & target_pixels)
+        if pixel_overlap:
+            reasons.append(f'{pixel_overlap} target image(s) share recorded decoded-pixel hashes with the source.')
+        targets.append({
+            'id':target.id,'name':target.name,'sample_count':len(rows),
+            'modality':target.modality,'synthetic':bool(target.synthetic),
+            'labels':sorted(labels),'test_count':sum(sample.split=='test' for sample in rows),
+            'compatible':not reasons,'reasons':reasons,
+            'exact_hash_overlap_count':hash_overlap,'pixel_hash_overlap_count':pixel_overlap
+        })
+    return {
+        'source':{'id':source.id,'name':source.name,'modality':source.modality,
+                  'training_labels':sorted(source_train_labels),'sample_count':len(source_rows)},
+        'baseline_ready':baseline_ready,'targets':targets,
+        'compatible_target_count':sum(bool(item['compatible']) for item in targets),
+        'note':'Compatibility checks compare declared modality, exact recorded label names, target test split and known duplicate hashes. The worker performs an additional decoded-pixel identity check. Matching metadata does not establish clinical equivalence.'
+    }
+
+@app.get('/api/datasets/{did}/cross-dataset-readiness')
+def cross_dataset_readiness(did:str):
+    with Session() as db:
+        get_dataset(db,did)
+        return _cross_dataset_readiness(db,did)
+
+@app.get('/api/datasets/{did}/impact-readiness')
+def impact_readiness_route(did:str):
+    with Session() as db:
+        get_dataset(db,did)
+        readiness=lab_impact_readiness(db,did)
+        latest=db.scalar(select(Experiment).where(
+            Experiment.dataset_id==did,Experiment.kind=='impact'
+        ).order_by(Experiment.created_at.desc()).limit(1))
+        if latest:
+            job=db.scalar(select(Job).where(Job.target_id==latest.id).order_by(Job.created_at.desc()).limit(1))
+            readiness['last_attempt']={
+                'status':latest.status,'error':job.error if job else None,
+                'created_at':stamp(latest.created_at)
+            }
+        else:
+            readiness['last_attempt']=None
+        return readiness
+
 @app.get('/api/datasets/{did}/dna')
 def dataset_dna(did:str):
     with Session() as db:
@@ -420,6 +496,18 @@ def create_experiment(did:str,payload:ExperimentInput):
             readiness=_baseline_readiness(db,did)
             if not readiness['ready']:
                 raise HTTPException(422,'Baseline cannot start: '+' '.join(readiness['reasons']))
+        if payload.kind=='impact':
+            readiness=lab_impact_readiness(db,did)
+            if not readiness['ready']:
+                raise HTTPException(422,'Impact Simulator cannot start: '+' '.join(readiness['reasons']))
+        if payload.kind=='cross_dataset':
+            target_id=payload.config.get('target_dataset_id')
+            readiness=_cross_dataset_readiness(db,did)
+            target=next((item for item in readiness['targets'] if item['id']==target_id),None)
+            if not target:
+                raise HTTPException(422,'Choose a second dataset that is already imported.')
+            if not target['compatible']:
+                raise HTTPException(422,'Cross-Dataset Lab cannot start: '+' '.join(target['reasons']))
         if payload.kind in ('shortcut','counterfactual','cross_dataset'):
             previous=db.scalars(select(Experiment).where(Experiment.dataset_id==did,
                 Experiment.kind=='baseline',Experiment.status=='completed').order_by(Experiment.created_at.desc())).all()
