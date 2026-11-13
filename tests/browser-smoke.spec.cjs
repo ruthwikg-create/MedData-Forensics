@@ -77,3 +77,81 @@ test('mobile navigation, theme and graph controls do not overflow viewport',asyn
  expect(pageOverflow).toBe(false);
  await page.screenshot({path:testInfo.outputPath('graph-mobile-dark.png'),fullPage:true});
 });
+
+async function waitForCompletedJob(request,jobId){
+ let job=null;
+ for(let i=0;i<100;i++){
+  const response=await request.get('/api/jobs/'+jobId);
+  expect(response.ok()).toBeTruthy();
+  job=await response.json();
+  if(['completed','failed','cancelled'].includes(job.status))break;
+  await new Promise(resolve=>setTimeout(resolve,900));
+ }
+ expect(job?.status,'Job result: '+JSON.stringify(job)).toBe('completed');
+ return job;
+}
+
+test('Cross-Dataset, Impact and Reproducibility work through their real UI controls',async({page,request})=>{
+ const source=await sandbox(request,971,64),target=await sandbox(request,972,64);
+ const baseline=await request.post('/api/datasets/'+source+'/experiments',{data:{kind:'baseline',config:{seed:42}}});
+ expect(baseline.ok(),await baseline.text()).toBeTruthy();
+ await waitForCompletedJob(request,(await baseline.json()).job_id);
+
+ await page.goto('/#/cross');
+ await page.locator('#datasetSelect').selectOption(source);
+ await expect(page.getByRole('heading',{name:'Cross-Dataset Reliability Lab'})).toBeVisible();
+ await expect(page.locator('#crossTarget')).toBeVisible();
+ await page.locator('#crossTarget').selectOption(target);
+ await page.locator('[data-action="cross-launch"]').click();
+ const crossJob=(await request.get('/api/jobs')).json;
+ let jobs=await crossJob;
+ let cross=jobs.find(job=>job.kind==='cross_dataset'&&job.status==='queued');
+ if(!cross)cross=jobs.find(job=>job.kind==='cross_dataset');
+ expect(cross,'Cross-Dataset job should be queued from the UI').toBeTruthy();
+ await waitForCompletedJob(request,cross.id);
+ await page.reload();await page.goto('/#/cross');
+ await page.locator('#datasetSelect').selectOption(source);
+ await expect(page.getByText('External macro-F1')).toBeVisible();
+
+ const impact=await sandbox(request,973,64);
+ const audit=await request.post('/api/datasets/'+impact+'/audit');
+ expect(audit.ok(),await audit.text()).toBeTruthy();
+ await waitForCompletedJob(request,(await audit.json()).job_id);
+ const findingResponse=await request.get('/api/datasets/'+impact+'/findings?size=200');
+ const findings=(await findingResponse.json()).items;
+ const sampleResponse=await request.get('/api/datasets/'+impact+'/samples?split=train&size=100');
+ const trainIds=new Set((await sampleResponse.json()).items.map(item=>item.id));
+ const supported=new Set(['split_leakage','group_overlap','exact_duplicate','pixel_duplicate','near_duplicate','label_suspicion']);
+ const finding=findings.find(item=>supported.has(item.kind)&&[item.sample_id,item.linked_id].some(id=>id&&trainIds.has(id)));
+ expect(finding,'Synthetic audit should produce a reviewable training-linked finding').toBeTruthy();
+ const review=await request.post('/api/findings/'+finding.id+'/review',{data:{
+  reviewer:'Browser QA','decision':'confirmed',
+  notes:'Confirmed for the synthetic workflow test after inspecting linked evidence.'}});
+ expect(review.ok(),await review.text()).toBeTruthy();
+
+ await page.goto('/#/impact');
+ await page.locator('#datasetSelect').selectOption(impact);
+ await expect(page.getByText('Ready to run')).toBeVisible();
+ await page.locator('[data-action="impact"]').click();
+ await expect(page.getByText(/experiment queued/i)).toBeVisible();
+ jobs=await (await request.get('/api/jobs')).json();
+ const impactJob=jobs.find(job=>job.kind==='impact'&&['queued','running'].includes(job.status));
+ expect(impactJob,'Impact job should be queued from the UI').toBeTruthy();
+ await waitForCompletedJob(request,impactJob.id);
+ await page.reload();await page.goto('/#/impact');
+ await page.locator('#datasetSelect').selectOption(impact);
+ await expect(page.getByText('Samples excluded')).toBeVisible();
+
+ await page.goto('/#/failures');
+ await page.locator('#datasetSelect').selectOption(source);
+ await expect(page.locator('.cm-grid button[data-confusion]').first()).toBeVisible();
+
+ await page.goto('/#/repro');
+ await page.locator('#datasetSelect').selectOption(source);
+ await expect(page.getByRole('heading',{name:'Reproducibility Engine'})).toBeVisible();
+ await expect(page.getByText('Dataset fingerprint')).toBeVisible();
+ const downloadPromise=page.waitForEvent('download');
+ await page.locator('[data-action="download-repro"]').click();
+ const download=await downloadPromise;
+ expect(download.suggestedFilename()).toContain('_repro.json');
+});
