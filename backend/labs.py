@@ -293,6 +293,8 @@ def run_cross_dataset(exp_id,progress=None):
         target_id=cfg.get('target_dataset_id')
         if not target_id or target_id==d.id:raise ValueError('Choose a separate target dataset')
         target,external=_load(db,target_id);base,model=_latest_model(db,d.id)
+        if cfg.get('independence_confirmed') is not True:
+            raise ValueError('Researcher must confirm that the target is independently collected and is not a subset, resize, augmentation or re-export of the source dataset')
         source_classes=set(str(x) for x in model.classes_.tolist())
         target_classes=set(str(s.label) for s in external)
         if d.modality!=target.modality:
