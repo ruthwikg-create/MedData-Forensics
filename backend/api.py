@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Optional,Literal
 from datetime import datetime,timezone
 import csv,io,json,os,shutil,tempfile,threading,html
-from fastapi import FastAPI,HTTPException,UploadFile,File,Form,Request,Query
+from fastapi import FastAPI,HTTPException,UploadFile,File,Form,Request,Query,BackgroundTasks
 from fastapi.responses import FileResponse,HTMLResponse,JSONResponse,StreamingResponse,Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel,Field
@@ -14,6 +14,7 @@ from sqlalchemy import select,func
 from .db import Session,DATA_ROOT,ARTIFACT_ROOT,Dataset,Sample,Finding,Review,AuditRun,Experiment,Job,jd,jl,now
 from .security import safe_path,extract_auth,MAX_ARCHIVE_BYTES,MAX_NPZ_BYTES,sha_file,manifest_hash
 from .ingest import demo_dataset,import_zip,import_npz
+from .large_import import CHUNK_BYTES,create_session,append_chunk,begin_processing,process_session,status as large_import_status
 from .analysis_engine import forensic_graph,ranking_comparison
 from .labs import EXPERIMENT_RUNNERS
 from .worker import loop
@@ -145,6 +146,67 @@ async def import_dataset(file:UploadFile=File(...),name:str=Form(...),source:str
     finally:
         if p:p.unlink(missing_ok=True)
         await file.close()
+
+class LargeImportFile(BaseModel):
+    name: str = Field(min_length=1,max_length=240)
+    size: int = Field(gt=0)
+
+class LargeImportStart(BaseModel):
+    name: str = Field(min_length=2,max_length=200)
+    source: str = Field(default='Local research dataset',max_length=255)
+    license: str = Field(default='Verify original dataset license',max_length=250)
+    modality: str = Field(default='Biomedical 2D image',max_length=120)
+    files: list[LargeImportFile] = Field(min_length=1,max_length=6)
+    max_per_split: int = Field(default=500,ge=10,le=10000)
+
+
+@app.post('/api/datasets/import-large')
+def initialize_large_import(payload: LargeImportStart):
+    """Initialize a disk-backed upload rather than buffering >1 GB in an HTTP form."""
+    try:
+        record = create_session(payload.name,payload.source,payload.license,payload.modality,
+                                [entry.model_dump() for entry in payload.files],payload.max_per_split)
+        return {**record,'chunk_bytes':CHUNK_BYTES}
+    except ValueError as ex:
+        raise HTTPException(422,str(ex))
+
+
+@app.put('/api/datasets/import-large/{session_id}/files/{file_index}')
+async def upload_large_import_chunk(session_id:str,file_index:int,request:Request,
+                                    offset:int=Query(...,ge=0)):
+    """One sequential <=8 MiB binary request; enforce limit while streaming."""
+    declared=request.headers.get('content-length')
+    if declared:
+        try:
+            if int(declared)>CHUNK_BYTES:raise HTTPException(413,'Upload chunk exceeds 8 MiB')
+        except ValueError:
+            raise HTTPException(400,'Invalid Content-Length')
+    buffer=bytearray()
+    async for part in request.stream():
+        if len(buffer)+len(part)>CHUNK_BYTES:
+            raise HTTPException(413,'Upload chunk exceeds 8 MiB')
+        buffer.extend(part)
+    try:
+        return append_chunk(session_id,file_index,offset,bytes(buffer))
+    except ValueError as ex:
+        raise HTTPException(409,str(ex))
+
+
+@app.post('/api/datasets/import-large/{session_id}/process')
+def process_large_import(session_id:str,background_tasks:BackgroundTasks):
+    try:
+        state=begin_processing(session_id)
+    except ValueError as ex:
+        raise HTTPException(409,str(ex))
+    background_tasks.add_task(process_session,session_id)
+    return state
+
+
+@app.get('/api/datasets/import-large/{session_id}')
+def get_large_import_status(session_id:str):
+    try:return large_import_status(session_id)
+    except ValueError as ex:raise HTTPException(404,str(ex))
+
 
 @app.get('/api/datasets/{did}')
 def dataset_detail(did:str):
