@@ -284,9 +284,10 @@ def baseline_readiness(did:str):
 def _cross_dataset_readiness(db,did):
     source=get_dataset(db,did)
     source_rows=db.scalars(select(Sample).where(Sample.dataset_id==did)).all()
-    source_train_labels={sample.label for sample in source_rows if sample.split=='train'}
-    source_hashes={sample.sha256 for sample in source_rows if sample.sha256}
-    source_pixels={sample.pixelhash for sample in source_rows if sample.pixelhash}
+    source_valid=[sample for sample in source_rows if sample.width and sample.height]
+    source_train_labels={sample.label for sample in source_valid if sample.split=='train'}
+    source_hashes={sample.sha256 for sample in source_valid if sample.sha256}
+    source_pixels={sample.pixelhash for sample in source_valid if sample.pixelhash}
     baselines=db.scalars(select(Experiment).where(
         Experiment.dataset_id==did,Experiment.kind=='baseline',Experiment.status=='completed'
     ).order_by(Experiment.created_at.desc())).all()
@@ -294,42 +295,44 @@ def _cross_dataset_readiness(db,did):
     targets=[]
     for target in db.scalars(select(Dataset).where(Dataset.id!=did).order_by(Dataset.created_at.desc())).all():
         rows=db.scalars(select(Sample).where(Sample.dataset_id==target.id)).all()
-        labels={sample.label for sample in rows}
+        valid_rows=[sample for sample in rows if sample.width and sample.height]
+        labels={sample.label for sample in valid_rows}
         reasons=[]
-        if not rows:
-            reasons.append('This collection has no imported image records.')
+        if not valid_rows:
+            reasons.append('This collection has no decodable image records.')
         if source.modality!=target.modality:
             reasons.append('Declared modality does not match the source collection.')
-        if source_train_labels!=labels:
-            missing=sorted(source_train_labels-labels)
-            extra=sorted(labels-source_train_labels)
-            details=[]
-            if missing:details.append('missing '+', '.join(missing[:8]))
-            if extra:details.append('extra '+', '.join(extra[:8]))
-            reasons.append('Complete label vocabulary does not match ('+'; '.join(details)+').')
-        if not any(sample.split=='test' for sample in rows):
-            reasons.append('The target collection has no held-out test partition.')
-        target_hashes={sample.sha256 for sample in rows if sample.sha256}
+        if not any(sample.split=='test' for sample in valid_rows):
+            reasons.append('The target collection has no decodable held-out test partition.')
+        target_hashes={sample.sha256 for sample in valid_rows if sample.sha256}
         hash_overlap=len(source_hashes & target_hashes)
         if hash_overlap:
             reasons.append(f'{hash_overlap} target image(s) share exact file hashes with the source.')
-        target_pixels={sample.pixelhash for sample in rows if sample.pixelhash}
+        target_pixels={sample.pixelhash for sample in valid_rows if sample.pixelhash}
         pixel_overlap=len(source_pixels & target_pixels)
         if pixel_overlap:
             reasons.append(f'{pixel_overlap} target image(s) share recorded decoded-pixel hashes with the source.')
+        label_mapping_required=bool(labels and source_train_labels!=labels)
+        mapping_eligible=bool(label_mapping_required and len(source_train_labels)==len(labels) and not reasons)
+        if label_mapping_required and not mapping_eligible:
+            reasons.append('Label vocabularies differ and cannot be paired one-to-one because their class counts differ.')
+        compatible=not reasons and not label_mapping_required
+        selectable=compatible or mapping_eligible
         targets.append({
             'id':target.id,'name':target.name,'sample_count':len(rows),
             'modality':target.modality,'synthetic':bool(target.synthetic),
-            'labels':sorted(labels),'test_count':sum(sample.split=='test' for sample in rows),
-            'compatible':not reasons,'reasons':reasons,
+            'labels':sorted(labels),'test_count':sum(sample.split=='test' for sample in valid_rows),
+            'compatible':compatible,'mapping_eligible':mapping_eligible,
+            'label_mapping_required':label_mapping_required,'selectable':selectable,
+            'reasons':reasons,
             'exact_hash_overlap_count':hash_overlap,'pixel_hash_overlap_count':pixel_overlap
         })
     return {
         'source':{'id':source.id,'name':source.name,'modality':source.modality,
                   'training_labels':sorted(source_train_labels),'sample_count':len(source_rows)},
         'baseline_ready':baseline_ready,'targets':targets,
-        'compatible_target_count':sum(bool(item['compatible']) for item in targets),
-        'note':'Compatibility checks compare declared modality, exact recorded label names, target test split and known duplicate hashes. The worker performs an additional decoded-pixel identity check. Matching metadata does not establish clinical equivalence.'
+        'compatible_target_count':sum(bool(item['selectable']) for item in targets),
+        'note':'Exact label vocabularies need no mapping. Different vocabularies may be compared only with a user-confirmed one-to-one mapping and compatible image modality, a held-out test split and no known image-hash overlap. Mapping does not establish clinical equivalence.'
     }
 
 @app.get('/api/datasets/{did}/cross-dataset-readiness')
@@ -504,10 +507,21 @@ def create_experiment(did:str,payload:ExperimentInput):
             target_id=payload.config.get('target_dataset_id')
             readiness=_cross_dataset_readiness(db,did)
             target=next((item for item in readiness['targets'] if item['id']==target_id),None)
-            if not target:
-                raise HTTPException(422,'Choose a second dataset that is already imported.')
-            if not target['compatible']:
-                raise HTTPException(422,'Cross-Dataset Lab cannot start: '+' '.join(target['reasons']))
+            if not target or not target['selectable']:
+                detail=' '.join(target['reasons']) if target else 'Choose a second dataset that is already imported.'
+                raise HTTPException(422,'Cross-Dataset Lab cannot start: '+detail)
+            if target['mapping_eligible']:
+                mapping=payload.config.get('target_label_mapping')
+                source_labels=set(readiness['source']['training_labels'])
+                target_labels=set(target['labels'])
+                if payload.config.get('label_mapping_confirmed') is not True:
+                    raise HTTPException(422,'Confirm that the explicit one-to-one target-to-source label mapping is supported by the dataset documentation.')
+                if not isinstance(mapping,dict) or set(mapping)!=target_labels:
+                    raise HTTPException(422,'Provide one source-class mapping for every target label.')
+                if set(mapping.values())!=source_labels or len(set(mapping.values()))!=len(mapping):
+                    raise HTTPException(422,'The label mapping must be one-to-one and cover every source training class exactly once.')
+            elif payload.config.get('target_label_mapping'):
+                raise HTTPException(422,'A label mapping is not needed for identical class vocabularies; remove the mapping and retry.')
         if payload.kind in ('shortcut','counterfactual','cross_dataset'):
             previous=db.scalars(select(Experiment).where(Experiment.dataset_id==did,
                 Experiment.kind=='baseline',Experiment.status=='completed').order_by(Experiment.created_at.desc())).all()
