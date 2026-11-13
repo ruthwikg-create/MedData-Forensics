@@ -14,7 +14,7 @@ from sqlalchemy import select,func
 from .db import Session,DATA_ROOT,ARTIFACT_ROOT,Dataset,Sample,Finding,Review,AuditRun,Experiment,Job,jd,jl,now
 from .security import safe_path,extract_auth,MAX_ARCHIVE_BYTES,MAX_NPZ_BYTES,sha_file,manifest_hash
 from .ingest import demo_dataset,import_zip,import_npz
-from .large_import import CHUNK_BYTES,create_session,append_chunk,begin_processing,process_session,status as large_import_status
+from .large_import import CHUNK_BYTES,create_session,append_chunk,begin_processing,process_session,discard_session,status as large_import_status
 from .analysis_engine import forensic_graph,ranking_comparison
 from .labs import EXPERIMENT_RUNNERS
 from .worker import loop
@@ -206,6 +206,13 @@ def process_large_import(session_id:str,background_tasks:BackgroundTasks):
 def get_large_import_status(session_id:str):
     try:return large_import_status(session_id)
     except ValueError as ex:raise HTTPException(404,str(ex))
+
+
+
+@app.delete('/api/datasets/import-large/{session_id}')
+def discard_large_import(session_id:str):
+    try:return discard_session(session_id)
+    except ValueError as ex:raise HTTPException(409,str(ex))
 
 
 @app.get('/api/datasets/{did}')
