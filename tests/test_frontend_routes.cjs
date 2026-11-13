@@ -291,3 +291,16 @@ test('Dataset DNA histograms are actual sample filters and persist across rerend
 test('navigation transfers focus to main content after route changes',()=>{
  assert.ok(source.includes("await render();$('#main')?.focus({preventScroll:true})"));
 });
+
+test('Counterfactual Lab has independent pagination and persistent visual controls',()=>{
+ const html=vm.runInContext("state.detail={dataset:{id:'demo',name:'Synthetic research'},experiments:[]};state.samples={count:53,items:[{id:'s1',sample_id:'0001',label:'0',split:'test',image_url:'/files/s1'}]};state.counterPage=2;state.counterStrength=75;state.counterMode='mask';renderCounterfactual()",ctx);
+ assert.ok(html.includes('data-page="counter:prev"'));
+ assert.ok(html.includes('data-page="counter:next"'));
+ assert.ok(html.includes('Page 2/3'));
+ assert.ok(html.includes('id="counterfactualAmount" type="range" min="0" max="100" value="75"'));
+ assert.ok(html.includes('id="counterfactualReadout" for="counterfactualAmount">75%'));
+ assert.ok(html.includes('value="mask" selected'));
+ assert.ok(source.includes("state.view==='counterfactual'?state.counterPage:state.samplePage"));
+ assert.ok(source.includes("state.view==='dna'?(state.sampleFilter||''):''"));
+ vm.runInContext("state.counterPage=1;state.counterMode='brightness';state.counterStrength=40",ctx);
+});
