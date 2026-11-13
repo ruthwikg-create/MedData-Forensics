@@ -437,3 +437,17 @@ test('both importers require and persist a specific imaging modality',()=>{
  assert.ok(source.includes('Other / unspecified (not eligible for cross-dataset comparison)'));
  assert.ok(source.includes("startButton.disabled=!check.ready||!$('#largeImportModality')?.value"));
 });
+
+test('Cross-Dataset requires an explicit independent-source attestation',()=>{
+ const html=vm.runInContext(`
+  state.did='s';state.detail={dataset:{id:'s',name:'Source'},experiments:[
+   {kind:'baseline',status:'completed',checkpoint_available:true}
+  ]};
+  state.crossReadiness={source:{training_labels:['a','b']},baseline_ready:true,
+   targets:[{id:'t',name:'Target',sample_count:40,modality:'Synthetic geometry (NOT medical images)',
+    labels:['a','b'],compatible:true,selectable:true,reasons:[]}]};
+  renderCross()
+ `,ctx);
+ assert.ok(html.includes('id="crossIndependenceConfirm"'));
+ assert.ok(html.includes('not a subset, resize, augmentation or re-export'));
+});
