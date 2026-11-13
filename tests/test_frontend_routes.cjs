@@ -428,3 +428,12 @@ test('Reproducibility offers an immediate bundle export and file verification wi
  assert.ok(html.includes('No experiment records'));
  assert.ok(html.includes('format=repro'));
 });
+
+test('both importers require and persist a specific imaging modality',()=>{
+ assert.ok(source.includes('id="datasetModality" required'));
+ assert.ok(source.includes('id="largeImportModality" class="select" required'));
+ assert.ok(source.includes("b.append('modality',$('#datasetModality').value)"));
+ assert.ok(source.includes("modality:$('#largeImportModality').value"));
+ assert.ok(source.includes('Other / unspecified (not eligible for cross-dataset comparison)'));
+ assert.ok(source.includes("startButton.disabled=!check.ready||!$('#largeImportModality')?.value"));
+});
