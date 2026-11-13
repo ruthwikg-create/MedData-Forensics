@@ -35,6 +35,24 @@ const pct=x=>x==null?'—':(Number(x)*100).toFixed(1)+'%';
 const number=x=>Number(x||0).toLocaleString('en-US');
 const short=x=>String(x||'').length>24?String(x).slice(0,12)+'…'+String(x).slice(-8):String(x||'');
 const title=s=>s.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
+
+/* The research interface has no synthetic percentages: a busy state is indeterminate. */
+function workspaceLoader(message='Loading research evidence…'){
+ const label=esc(message);
+ return `<section class="workspace-loader" role="status" aria-live="polite" aria-label="${label}">
+  <div class="loader-intro"><div class="loader-orbit" aria-hidden="true"><span class="loader-orbit-core"></span></div>
+  <div><div class="eyebrow">EVIDENCE WORKSPACE</div><h2>Preparing your analysis</h2><p>${label}</p></div></div>
+  <div class="loader-track" aria-hidden="true"></div>
+  <div class="loader-skeletons" aria-hidden="true">
+   <div class="loader-panel loader-panel-large"><span class="skeleton-line skeleton-short"></span><span class="skeleton-line skeleton-title"></span><span class="skeleton-line skeleton-wide"></span><div class="skeleton-chart"><span></span><span></span><span></span><span></span><span></span></div></div>
+   <div class="loader-panel"><span class="skeleton-line skeleton-short"></span><span class="skeleton-line skeleton-title"></span><span class="skeleton-line skeleton-wide"></span><span class="skeleton-line skeleton-mid"></span><span class="skeleton-line skeleton-wide"></span></div>
+  </div><p class="loader-caption">Waiting for actual local research data. No simulated progress or results.</p>
+ </section>`;
+}
+function setWorkspaceBusy(active){
+ $('#main').setAttribute('aria-busy',String(active));
+ $('.topbar')?.classList.toggle('is-loading',active);
+}
 const state={view:'overview',datasets:[],did:'',detail:null,overview:null,findings:null,analysisJob:null,activeFilters:{kind:'',status:''},samplePage:1,counterPage:1,counterStrength:40,counterMode:'brightness',reviewPage:1,modal:null,graphUi:{search:'',severity:'all',links:'all',layout:'network',zoom:1},failureCell:'',dnaFilters:{split:'',label:'',search:''}};
 let lastFocused=null, refreshTimer=null;
 async function api(path,opt={}){
@@ -799,8 +817,33 @@ async function loadView(){const did=state.did;
  if(state.view==='impact')state.impactReadiness=await api('/api/datasets/'+did+'/impact-readiness');
 }
 const RENDER={overview:renderOverview,dna:renderDNA,audit:renderAudit,graph:renderGraph,review:renderReview,shortcut:renderShortcut,counterfactual:renderCounterfactual,cross:renderCross,impact:renderImpact,failures:renderFailures,repro:renderRepro,privacy:renderPrivacy};
-async function render(){try{$('#main').innerHTML='<div class="loading-screen"><div class="spinner"></div><p>Loading research evidence…</p></div>';await loadView();$('#crumbCurrent').textContent=({dna:'Dataset DNA',audit:'Forensic Audit',graph:'Evidence Graph',review:'Review Center',shortcut:'Shortcut Inspector',counterfactual:'Counterfactual Lab',cross:'Cross-Dataset Lab',impact:'Impact Simulator',failures:'Failure Explorer',repro:'Reproducibility',privacy:'Privacy & Integrity'})[state.view]||'Overview';const rendered=(RENDER[state.view]||renderOverview)();if(typeof rendered!=='string'||!rendered.trim())throw Error('The '+state.view+' workspace did not render correctly.');$('#main').innerHTML=rendered;document.querySelectorAll('.nav-link').forEach(b=>b.classList.toggle('active',b.dataset.view===state.view));if(state.view==='graph'&&state.graph?.nodes?.length)drawGraph(state.graph);if(state.view==='counterfactual'&&state.samples?.items?.length)updateCounterfactualPreview();}catch(e){renderError(e)}}
-async function refresh(full=true){try{if(full)await loadCore();await render()}catch(e){renderError(e)}}
+// A late API response from an older view must never overwrite a newer navigation.
+let renderRequestId=0;
+async function render(){
+ const requestId=++renderRequestId;
+ const main=$('#main');
+ const view=state.view;
+ setWorkspaceBusy(true);
+ main.innerHTML=workspaceLoader();
+ $('#crumbCurrent').textContent=({dna:'Dataset DNA',audit:'Forensic Audit',graph:'Evidence Graph',review:'Review Center',shortcut:'Shortcut Inspector',counterfactual:'Counterfactual Lab',cross:'Cross-Dataset Lab',impact:'Impact Simulator',failures:'Failure Explorer',repro:'Reproducibility',privacy:'Privacy & Integrity'})[view]||'Overview';
+ document.querySelectorAll('.nav-link').forEach(b=>b.classList.toggle('active',b.dataset.view===view));
+ try{
+  await loadView();
+  if(requestId!==renderRequestId)return;
+  const rendered=(RENDER[view]||renderOverview)();
+  if(typeof rendered!=='string'||!rendered.trim())throw Error('The '+view+' workspace did not render correctly.');
+  main.innerHTML=`<div class="workspace-page">${rendered}</div>`;
+  if(view==='graph'&&state.graph?.nodes?.length)drawGraph(state.graph);
+  if(view==='counterfactual'&&state.samples?.items?.length)updateCounterfactualPreview();
+ }catch(e){if(requestId===renderRequestId)renderError(e)}
+ finally{if(requestId===renderRequestId)setWorkspaceBusy(false)}
+}
+async function refresh(full=true){
+ try{
+  if(full){++renderRequestId;setWorkspaceBusy(true);$('#main').innerHTML=workspaceLoader('Refreshing local dataset evidence…');await loadCore()}
+  await render();
+ }catch(e){setWorkspaceBusy(false);renderError(e)}
+}
 async function navigate(view){state.view=RENDER[view]?view:'overview';window.location.hash='#/'+state.view;$('#sidebar').classList.remove('open');$('#mobileOverlay').hidden=true;$('#menuToggle').setAttribute('aria-expanded','false');state.findingPage=1;await render();$('#main')?.focus({preventScroll:true});window.scrollTo({top:0,behavior:'instant'})}
 async function changeDataset(did){state.did=did;storage.set('localStorage','mdf-dataset',did);state.activeFilters={kind:'',status:''};state.samplePage=1;state.counterPage=1;state.findingPage=1;state.sampleFilter='';state.counterSampleId=null;state.counterStrength=40;state.counterMode='brightness';state.samples=null;state.findings=null;state.graph=null;state.rankings=null;state.baselineReadiness=null;state.graphUi={search:'',severity:'all',links:'all',layout:'network',zoom:1};state.failureCell='';state.dnaFilters={split:'',label:'',search:''};await refresh(true);toast('Research dataset selected.');}
 function drawGraph(graph){
@@ -1104,7 +1147,7 @@ async function handleAction(action){switch(action){case 'import':return openImpo
 }case 'scenario-launch':return launchExperiment('scenario',{seed:Number($('#scenarioSeed').value),label_flip_rate:Number($('#scenarioRate').value)});case 'verify-integrity':{if(!state.did)return toast('Select a dataset first',true);try{const info=await api('/api/datasets/'+state.did+'/verify');const target=$('#integrityResults');if(target)target.innerHTML=`<div class="notice ${info.passed?'':'warning'}" style="margin-top:12px"><strong>${info.passed?'Integrity check passed':'Integrity check found issues'}</strong><p>Files checked: ${number(info.checked_files)} · Problems: ${number(info.problem_count)}</p><p class="fine">${esc((info.problems||[]).slice(0,5).map(p=>p.kind+': '+(p.sample_id||'manifest')).join('; ') || 'No recorded mismatches.')}</p></div>`;}catch(e){toast(e.message,true)}return;}case 'download-json':window.location.href='/api/datasets/'+state.did+'/report?format=json';return;case 'download-repro':window.location.href='/api/datasets/'+state.did+'/report?format=repro';return;case 'go-dna':return navigate('dna');case 'auth-prompt':openModal('Local access token',`<div class="field"><label for="authToken">MDF_ACCESS_TOKEN</label><input class="input" type="password" id="authToken" placeholder="Enter configured token"></div>${btn('Authenticate','save-token','btn-primary')}`);return;case 'save-token':storage.set('sessionStorage','mdf-token',$('#authToken').value);await api('/api/session',{method:'POST'});toast('Authenticated for this local session');return;default:toast('Unknown control: '+action,true)}}
 document.addEventListener('click',async e=>{
  const nav=e.target.closest('[data-view]');if(nav){navigate(nav.dataset.view);return}
- const act=e.target.closest('[data-action]');if(act){act.disabled=true;try{await handleAction(act.dataset.action)}catch(err){toast(err.message,true)}finally{if(act.isConnected)act.disabled=false}return}
+ const act=e.target.closest('[data-action]');if(act){if(act.disabled)return;act.disabled=true;act.classList.add('is-pending');act.setAttribute('aria-busy','true');try{await handleAction(act.dataset.action)}catch(err){toast(err.message,true)}finally{if(act.isConnected){act.disabled=false;act.classList.remove('is-pending');act.removeAttribute('aria-busy')}}return}
  const matrix=e.target.closest('[data-confusion]');if(matrix){state.failureCell=matrix.dataset.confusion;updateFailureExplorer();return}
  const chart=e.target.closest('[data-dna-chart]');if(chart){setDnaChartFilter(chart.dataset.dnaChart,chart.dataset.dnaValue);render();return}
  const dataset=e.target.closest('[data-dataset]');if(dataset){changeDataset(dataset.dataset.dataset);return}
@@ -1139,4 +1182,4 @@ async function pollJobs(){try{const rows=await api('/api/jobs');updateJobIndicat
  if(pollJobs.last!==undefined&&pollJobs.last!==terminal){await loadCore();await render()}
  pollJobs.last=terminal;
  }catch{} }
-(async()=>{try{const start=location.hash.replace('#/','');state.view=RENDER[start]?start:'overview';await loadCore();await render();pollJobs.last=undefined;refreshTimer=setInterval(pollJobs,4500)}catch(e){renderError(e)}})();
+(async()=>{try{const start=location.hash.replace('#/','');state.view=RENDER[start]?start:'overview';await loadCore();await render();pollJobs.last=undefined;refreshTimer=setInterval(pollJobs,4500)}catch(e){setWorkspaceBusy(false);renderError(e)}})();

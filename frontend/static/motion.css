@@ -1,0 +1,43 @@
+/* MedData Forensics: subtle, accessible interface feedback; no fake numeric progress. */
+.topbar.is-loading::after{content:'';position:absolute;bottom:-1px;left:0;width:34%;height:2px;border-radius:2px;background:linear-gradient(90deg,transparent,var(--teal),#64b9a8,transparent);animation:workspaceRail 1.65s ease-in-out infinite;pointer-events:none}
+.workspace-loader{width:100%;min-height:470px;max-width:1050px;margin:0 auto;animation:workspaceAppear .28s ease-out both}
+.loader-intro{display:flex;align-items:center;gap:20px;margin:8px 0 25px}
+.loader-intro h2{font-size:clamp(19px,2vw,26px);margin:5px 0 6px;color:var(--ink)}
+.loader-intro p{font-size:13px;color:var(--muted);line-height:1.55}
+.loader-orbit{width:76px;height:76px;min-width:76px;border-radius:24px;background:radial-gradient(circle at center,var(--teal-weak) 0 37%,transparent 39%),conic-gradient(from 45deg,var(--teal),transparent 34%,var(--border) 52%,var(--teal) 100%);position:relative;display:grid;place-items:center;box-shadow:0 8px 25px #156c5f18;animation:loaderFloat 3.4s ease-in-out infinite}
+.loader-orbit::before{content:'';width:55px;height:55px;border-radius:50%;border:1px solid var(--teal);opacity:.5;position:absolute}
+.loader-orbit::after{content:'';width:57px;height:57px;border-radius:50%;border:2px solid transparent;border-top-color:var(--teal);position:absolute;animation:spin 1.3s linear infinite}
+.loader-orbit-core{height:18px;width:18px;background:var(--teal);box-shadow:0 0 0 6px var(--teal-weak),0 0 20px #1f9c8780;border-radius:7px;animation:loaderBreathe 1.8s ease-in-out infinite}
+.loader-track{height:3px;background:var(--border);border-radius:5px;overflow:hidden;margin:0 0 22px;position:relative}
+.loader-track::before{content:'';position:absolute;inset:0 auto 0 0;width:35%;background:linear-gradient(90deg,transparent,var(--teal),transparent);animation:workspaceRail 1.65s ease-in-out infinite}
+.loader-skeletons{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(220px,1fr);gap:17px}
+.loader-panel{min-height:255px;background:var(--paper);border:1px solid var(--border);border-radius:var(--radius);padding:24px;overflow:hidden;box-shadow:var(--shadow)}
+.loader-panel-large{min-height:283px}
+.skeleton-line{display:block;height:12px;border-radius:6px;background:linear-gradient(105deg,var(--surface) 10%,var(--border) 45%,var(--surface) 85%);background-size:220% 100%;animation:workspaceShimmer 1.7s linear infinite;margin:0 0 16px}
+.skeleton-short{width:32%;height:10px}.skeleton-title{width:67%;height:22px;margin-bottom:22px}.skeleton-wide{width:94%}.skeleton-mid{width:59%}
+.skeleton-chart{height:115px;margin-top:32px;display:flex;align-items:end;gap:16px;padding:0 9px 9px;border-bottom:1px solid var(--border)}
+.skeleton-chart span{flex:1;max-width:75px;border-radius:7px 7px 0 0;background:linear-gradient(180deg,var(--teal-weak),var(--border));opacity:.82;animation:loaderBreathe 1.8s ease-in-out infinite}
+.skeleton-chart span:nth-child(1){height:43%;animation-delay:0s}.skeleton-chart span:nth-child(2){height:77%;animation-delay:.18s}.skeleton-chart span:nth-child(3){height:57%;animation-delay:.35s}.skeleton-chart span:nth-child(4){height:91%;animation-delay:.52s}.skeleton-chart span:nth-child(5){height:65%;animation-delay:.7s}
+.loader-caption{font-size:11px;color:var(--faint);margin-top:16px}
+.workspace-page{animation:workspaceAppear .32s cubic-bezier(.2,.7,.3,1) both}
+.nav-link .icon,.icon-btn .icon,.btn .icon{transition:transform .2s ease}
+.nav-link:hover .icon,.nav-link:focus-visible .icon{transform:translateX(2px)}
+.icon-btn:hover .icon{transform:scale(1.07)}
+.btn:hover:not(:disabled) .icon{transform:translateX(2px)}
+.nav-link.active::after{box-shadow:0 0 0 4px #90e6d51a}
+.btn.is-pending{opacity:.85;cursor:progress}
+.btn.is-pending::after,[data-action].is-pending:not(.btn)::after{content:'';display:inline-block;flex:none;width:13px;height:13px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;vertical-align:middle;margin-left:5px;animation:spin .7s linear infinite}
+.toast{animation:toastSlide .22s cubic-bezier(.18,.78,.31,1) both}
+.modal-backdrop:not([hidden]){animation:dialogBackdrop .18s ease-out both}
+.modal-backdrop:not([hidden]) .modal{animation:dialogEnter .25s cubic-bezier(.2,.7,.3,1) both}
+.job-indicator:not([hidden]){box-shadow:0 0 0 3px var(--amber-weak);animation:loaderBreathe 2.6s ease-in-out infinite}
+@keyframes workspaceRail{from{transform:translateX(-110%)}to{transform:translateX(300%)}}
+@keyframes workspaceShimmer{from{background-position:220% 0}to{background-position:-220% 0}}
+@keyframes workspaceAppear{from{opacity:0;transform:translateY(9px)}to{opacity:1;transform:translateY(0)}}
+@keyframes loaderFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
+@keyframes loaderBreathe{0%,100%{opacity:.75}50%{opacity:1}}
+@keyframes toastSlide{from{opacity:0;transform:translateX(14px)}to{opacity:1;transform:translateX(0)}}
+@keyframes dialogBackdrop{from{opacity:0}to{opacity:1}}
+@keyframes dialogEnter{from{opacity:0;transform:translateY(12px) scale(.986)}to{opacity:1;transform:translateY(0) scale(1)}}
+@media(max-width:700px){.loader-skeletons{grid-template-columns:1fr}.loader-panel{min-height:145px}.loader-panel-large{min-height:235px}.loader-orbit{width:60px;height:60px;min-width:60px;border-radius:18px}.loader-intro{gap:13px}.workspace-loader{min-height:0}}
+@media(prefers-reduced-motion:reduce){.workspace-page,.workspace-loader,.topbar.is-loading::after,.loader-track::before,.loader-orbit,.loader-orbit::after,.loader-orbit-core,.skeleton-line,.skeleton-chart span,.toast,.modal-backdrop:not([hidden]),.modal-backdrop:not([hidden]) .modal,.job-indicator:not([hidden]){animation:none!important;transform:none!important}.nav-link .icon,.icon-btn .icon,.btn .icon{transition:none!important}.topbar.is-loading::after{width:100%;background:var(--teal)}.loader-track::before{width:100%;background:var(--teal);opacity:.35}}
