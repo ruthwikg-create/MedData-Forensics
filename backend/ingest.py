@@ -154,7 +154,10 @@ def import_zip(path,name,source='User-provided image/CSV package',license='Unspe
             p=Path(info.filename)
             if p.is_absolute() or '..' in p.parts or '\\' in info.filename or (info.external_attr>>16)&0o170000==0o120000:
                 raise ValueError('Unsafe archive path/symlink')
-        raw=z.read('samples.csv')
+        if z.getinfo('samples.csv').file_size>8*1024*1024:
+            raise ValueError('CSV too large')
+        with z.open('samples.csv') as stream:
+            raw=stream.read(8*1024*1024+1)
         if len(raw)>8*1024*1024:raise ValueError('CSV too large')
         reader=csv.DictReader(io.StringIO(raw.decode('utf-8-sig')))
         if not {'sample_id','image_path','label','split'}.issubset(reader.fieldnames or []):raise ValueError('CSV missing required columns')
@@ -172,12 +175,15 @@ def import_zip(path,name,source='User-provided image/CSV package',license='Unspe
         try:
             with zipfile.ZipFile(path) as z:
                 for i,r in enumerate(rows):
-                    raw=z.read(r['image_path'])
+                    entry=z.getinfo(r['image_path'])
+                    if entry.file_size>20*1024*1024:raise ValueError('Image too large')
+                    with z.open(entry) as stream:
+                        raw=stream.read(20*1024*1024+1)
                     if len(raw)>20*1024*1024:raise ValueError('Image too large')
                     ext=Path(r['image_path']).suffix.lower();filename=f'{i:06d}{ext}';target=dest/filename;target.write_bytes(raw)
                     try:width,height=image_info(target)
                     except ValueError:width=height=None  # detector reports invalid sample
-                    samples.append(Sample(dataset_id=d.id,sample_id=r['sample_id'][:200],relpath=f'{d.id}/images/{filename}',label=r['label'][:120],split=r['split'],group_id=(r.get('group_id') or r.get('patient_id') or r.get('lesion_id') or None),group_type=('patient' if r.get('patient_id') else 'lesion' if r.get('lesion_id') else 'unspecified') if (r.get('group_id') or r.get('patient_id') or r.get('lesion_id')) else None,site=r.get('site_id') or None,source_id=r.get('source_record_id') or None,sha256=sha_file(target),width=width,height=height,meta=jd({k:v for k,v in r.items() if k not in ('image_path',)})))
+                    samples.append(Sample(dataset_id=d.id,sample_id=r['sample_id'][:200],relpath=f'{d.id}/images/{filename}',label=r['label'][:120],split=r['split'],group_id=(r.get('patient_id') or r.get('lesion_id') or r.get('group_id') or None),group_type=('patient' if r.get('patient_id') else 'lesion' if r.get('lesion_id') else 'unspecified') if (r.get('patient_id') or r.get('lesion_id') or r.get('group_id')) else None,site=r.get('site_id') or None,source_id=r.get('source_record_id') or None,sha256=sha_file(target),width=width,height=height,meta=jd({k:v for k,v in r.items() if k not in ('image_path',)})))
             db.add_all(samples);d.manifest_hash=manifest_hash(samples);db.commit()
             return d.id
         except Exception:
