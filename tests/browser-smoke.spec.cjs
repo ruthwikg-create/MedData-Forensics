@@ -103,7 +103,7 @@ test('Cross-Dataset, Impact and Reproducibility work through their real UI contr
  await expect(page.locator('#crossTarget')).toBeVisible();
  await page.locator('#crossTarget').selectOption(target);
  await page.locator('[data-action="cross-launch"]').click();
- let jobs=(await request.get('/api/jobs')).json();
+ let jobs=await (await request.get('/api/jobs')).json();
  let cross=jobs.filter(job=>job.kind==='cross_dataset').sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at)))[0];
  expect(cross,'Cross-Dataset job should be queued from the UI').toBeTruthy();
  await waitForCompletedJob(request,cross.id);
