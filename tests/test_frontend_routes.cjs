@@ -451,3 +451,16 @@ test('Cross-Dataset requires an explicit independent-source attestation',()=>{
  assert.ok(html.includes('id="crossIndependenceConfirm"'));
  assert.ok(html.includes('not a subset, resize, augmentation or re-export'));
 });
+
+test('Dataset DNA lets users correct old generic modality declarations with documentation',()=>{
+ const html=vm.runInContext(`
+  state.detail={dataset:{id:'d',name:'Old import',source:'MedMNIST',modality:'Other / unspecified',
+    license:'Check terms',manifest_hash:'abc',synthetic:false,sample_count:40},experiments:[]};
+  state.dna={splits:{train:20,val:10,test:10},labels:{a:20,b:20},sites:{unknown:40},image_shapes:{'28x28':40},lineage:[],group_coverage:{with_group_id:0}};
+  state.samples={items:[],count:0};renderDNA()
+ `,ctx);
+ assert.ok(html.includes('data-action="confirm-modality"'));
+ assert.ok(html.includes('Confirm / correct modality'));
+ assert.ok(source.includes("api('/api/datasets/'+state.did+'/modality'"));
+ assert.ok(source.includes('modalityAttestationConfirm'));
+});
