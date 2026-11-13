@@ -70,14 +70,20 @@ function uploadResearchDataset(formData,onProgress,onPhase){return new Promise((
 });}
 
 /** Chunked uploads use disk-backed 8 MiB blocks; no large browser-side buffers. */
-async function uploadLargeResearchDataset(files,options,onProgress,onIndex){
- const started=await api('/api/datasets/import-large',{method:'POST',
+async function uploadLargeResearchDataset(files,options,onProgress,onIndex,resumeSessionId=null){
+ const started=resumeSessionId?await api('/api/datasets/import-large/'+encodeURIComponent(resumeSessionId)):
+  await api('/api/datasets/import-large',{method:'POST',
   body:JSON.stringify({...options,files:files.map(f=>({name:f.name,size:f.size}))})});
- const sid=encodeURIComponent(started.id),size=started.chunk_bytes;
+ storage.set('localStorage','mdf-large-upload-session',started.id);
+ const sid=encodeURIComponent(started.id),size=started.chunk_bytes||8*1024*1024;
  if(!Number.isInteger(size)||size<1||size>8*1024*1024)throw Error('Invalid upload chunk size from server');
  const progress=()=>api('/api/datasets/import-large/'+sid);
- for(let i=0;i<files.length;i++){
-  const file=files[i];let offset=0;
+ if(started.phase==='completed'&&started.dataset_id){storage.set('localStorage','mdf-large-upload-session','');return {dataset_id:started.dataset_id,message:started.message}}
+ if(started.phase==='uploading'){
+  if(files.length!==started.files.length||files.some((file,i)=>file.name!==started.files[i].name||file.size!==started.files[i].size))
+   throw Error('Select the exact original files again to resume this upload. No completed chunks need to be re-sent.');
+  for(let i=0;i<files.length;i++){
+  const file=files[i];let offset=started.files[i].received;
   while(offset<file.size){
    const end=Math.min(file.size,offset+size);
    let status=null;
@@ -104,13 +110,17 @@ async function uploadLargeResearchDataset(files,options,onProgress,onIndex){
    onProgress(Math.round(100*status.received_bytes/status.total_bytes));
   }
  }
- await api('/api/datasets/import-large/'+sid+'/process',{method:'POST'});
- onIndex({phase:'queued',processed:0,total_images:0,message:'Awaiting indexing'});
+ }
+ if(started.phase==='uploading'||started.phase==='failed')
+  await api('/api/datasets/import-large/'+sid+'/process',{method:'POST'});
+ onIndex({phase:'queued',processed:started.processed||0,total_images:started.total_images||0,message:'Awaiting or resuming indexing'});
  while(true){
   await new Promise(resolve=>setTimeout(resolve,1000));
   const status=await progress();
-  if(status.phase==='completed'&&status.dataset_id)
+  if(status.phase==='completed'&&status.dataset_id){
+   storage.set('localStorage','mdf-large-upload-session','');
    return {dataset_id:status.dataset_id,message:status.message};
+  }
   if(status.phase==='failed')throw Error(status.error||status.message||'Import failed');
   onIndex(status);
  }
@@ -129,9 +139,23 @@ async function openLargeImport(){
   '<progress id="largeImportProgress" max="100" value="0" aria-label="Large dataset import progress"></progress>'+
   '<p id="largeImportMessage" role="status" aria-live="polite">Select files to begin.</p>'+
   '<p class="fine">During indexing, progress reflects actual processed image records. The local server must remain running. No estimated completion time is invented.</p></section>'+
+  '<div id="largeImportResumeSection" class="large-import-resume" hidden><p class="fine">A previous transfer is saved on this computer. Re-select the same files if its upload was interrupted. Indexing can resume without files.</p><button class="btn btn-small" type="button" id="largeImportResume">Resume previous import</button> <button class="btn btn-small" type="button" id="largeImportDiscard">Discard staged files</button></div>'+ 
   '<div class="actions"><button type="submit" class="btn btn-primary" id="largeImportStart">Import large dataset</button></div></form>';
  openModal('Import large dataset',body);
  const filesInput=$('#largeImportFiles');
+ const previous=storage.get('localStorage','mdf-large-upload-session');
+ $('#largeImportResumeSection').hidden=!previous;
+ let resume=false;
+ $('#largeImportResume').addEventListener('click',()=>{
+  resume=true;filesInput.required=false;$('#largeImportStart').click();filesInput.required=true;
+ });
+ $('#largeImportDiscard').addEventListener('click',async()=>{
+  const saved=storage.get('localStorage','mdf-large-upload-session');if(!saved)return;
+  try{await api('/api/datasets/import-large/'+encodeURIComponent(saved),{method:'DELETE'});
+   storage.set('localStorage','mdf-large-upload-session','');$('#largeImportResumeSection').hidden=true;
+   toast('Staged import files released. Indexed datasets are unchanged.');
+  }catch(error){toast(error.message,true)}
+ });
  filesInput.addEventListener('change',()=>{
   const files=[...filesInput.files];
   const mib=files.reduce((sum,f)=>sum+f.size,0)/1024/1024;
@@ -140,7 +164,9 @@ async function openLargeImport(){
  $('#largeImportForm').addEventListener('submit',async event=>{
   event.preventDefault();if(datasetImportInProgress)return;
   const files=[...filesInput.files];
-  if(!files.length)return;
+  if(!files.length&&!resume)return;
+  const sessionToResume=resume?storage.get('localStorage','mdf-large-upload-session'):null;
+  resume=false;
   const names=files.map(f=>f.name.toLowerCase());
   const ham=names.some(n=>/^ham10000_images_part_?[12]\.zip$/.test(n));
   const hasFirst=names.some(n=>/^ham10000_images_part_?1\.zip$/.test(n));
@@ -168,7 +194,7 @@ async function openLargeImport(){
      bar.value=total?Math.round(100*done/total):0;
      percent.textContent=total?Math.round(100*done/total)+'%':'Processing';
      message.textContent=total?'Indexed '+done.toLocaleString()+' / '+total.toLocaleString()+' images.':info.message;
-    });
+    },sessionToResume);
    datasetImportInProgress=false;$('#modalClose').disabled=false;
    state.did=result.dataset_id;storage.set('localStorage','mdf-dataset',state.did);
    closeModal();await refresh(true);await navigate('dna');
