@@ -15,7 +15,7 @@ from .db import Session,DATA_ROOT,ARTIFACT_ROOT,Dataset,Sample,Finding,Review,Au
 from .security import safe_path,extract_auth,MAX_ARCHIVE_BYTES,MAX_NPZ_BYTES,sha_file,manifest_hash
 from .ingest import demo_dataset,import_zip,import_npz
 from .analysis_engine import forensic_graph,ranking_comparison
-from .labs import EXPERIMENT_RUNNERS
+from .labs import EXPERIMENT_RUNNERS,impact_readiness,cross_dataset_readiness
 from .worker import loop
 
 stop=threading.Event()
@@ -157,6 +157,19 @@ def dataset_detail(did:str):
             'audits':[{'id':a.id,'status':a.status,'summary':jl(a.summary),'created_at':stamp(a.created_at)} for a in audits],
             'experiments':[experiment_out(e) for e in experiments]}
 
+@app.get('/api/datasets/{did}/impact-readiness')
+def impact_preflight(did:str):
+    with Session() as db:
+        get_dataset(db,did)
+        result=impact_readiness(db,did)
+        return {key:value for key,value in result.items() if key!='excluded_ids'}
+
+@app.get('/api/datasets/{did}/cross-targets')
+def cross_preflight(did:str):
+    with Session() as db:
+        get_dataset(db,did)
+        return cross_dataset_readiness(db,did)
+
 @app.get('/api/datasets/{did}/dna')
 def dataset_dna(did:str):
     with Session() as db:
@@ -293,6 +306,19 @@ def create_experiment(did:str,payload:ExperimentInput):
     with Session() as db:
         get_dataset(db,did)
         if payload.kind not in EXPERIMENT_RUNNERS:raise HTTPException(422,'Unsupported experiment')
+        if payload.kind=='impact':
+            readiness=impact_readiness(db,did)
+            if not readiness['ready']:raise HTTPException(422,readiness['reason'])
+        if payload.kind=='cross_dataset':
+            readiness=cross_dataset_readiness(db,did)
+            if not readiness['source_baseline_ready']:
+                raise HTTPException(422,'Train a baseline model before starting external evaluation.')
+            target_id=payload.config.get('target_dataset_id')
+            if not target_id:raise HTTPException(422,'Select a distinct target dataset before running external evaluation.')
+            target=next((item for item in readiness['options'] if item['id']==target_id),None)
+            if not target:raise HTTPException(422,'Selected external collection does not exist or matches the source dataset.')
+            if not target['eligible']:
+                raise HTTPException(422,'External evaluation blocked: '+', '.join(target['issues']))
         e=Experiment(dataset_id=did,kind=payload.kind,config=jd(payload.config))
         db.add(e);db.flush();job=_enqueue(db,payload.kind,e.id);db.commit()
         return {'experiment_id':e.id,'job_id':job.id}
@@ -302,7 +328,10 @@ def experiment_detail(eid:str):
     with Session() as db:
         e=db.get(Experiment,eid)
         if not e:raise HTTPException(404,'Experiment not found')
-        return experiment_out(e)
+        output=experiment_out(e)
+        job=db.scalar(select(Job).where(Job.target_id==e.id).order_by(Job.created_at.desc()).limit(1))
+        output['last_job']={'status':job.status,'message':job.message,'error':job.error} if job else None
+        return output
 
 def job_out(j):
     return {'id':j.id,'target_id':j.target_id,'kind':j.kind,'status':j.status,'progress':j.progress,'message':j.message,'error':j.error,
