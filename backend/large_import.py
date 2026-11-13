@@ -63,8 +63,6 @@ def _available_disk(bytes_needed):
 
 
 def create_session(name, source, license_name, modality, files, max_per_split=500):
-    if modality not in SUPPORTED_MODALITIES:
-        raise ValueError('Unsupported imaging modality declaration')
     if not (2 <= len(name.strip()) <= 200):
         raise ValueError('Dataset name must contain 2–200 characters')
     if not (1 <= len(files) <= 6):
