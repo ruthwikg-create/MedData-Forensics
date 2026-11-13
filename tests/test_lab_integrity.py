@@ -184,3 +184,21 @@ def test_cross_dataset_accepts_only_confirmed_one_to_one_label_mapping():
         assert result['label_mapping_confirmed'] is True
         assert result['external_test']['metrics']['n']>0
         assert set(result['external_test']['metrics']['labels'])=={'pattern_a','pattern_b'}
+
+def test_cross_dataset_blocks_generic_or_unspecified_modalities():
+    with TestClient(app) as client:
+        source_id=client.post('/api/datasets/demo',json={'count':48,'seed':351}).json()['dataset_id']
+        target_id=client.post('/api/datasets/demo',json={'count':48,'seed':352}).json()['dataset_id']
+        with Session() as db:
+            db.get(Dataset,source_id).modality='Other / unspecified'
+            db.get(Dataset,target_id).modality='Other / unspecified'
+            db.commit()
+        readiness=client.get(f'/api/datasets/{source_id}/cross-dataset-readiness').json()
+        target=next(item for item in readiness['targets'] if item['id']==target_id)
+        assert target['selectable'] is False
+        assert target['compatible'] is False
+        assert any('specific imaging modality' in reason.lower() for reason in target['reasons'])
+        blocked=client.post(f'/api/datasets/{source_id}/experiments',
+            json={'kind':'cross_dataset','config':{'target_dataset_id':target_id}})
+        assert blocked.status_code==422
+        assert 'specific imaging modality' in blocked.json()['detail'].lower()
