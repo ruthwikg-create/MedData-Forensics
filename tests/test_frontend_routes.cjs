@@ -315,3 +315,68 @@ test('evidence graph offers interactive network and trace layouts with only obse
  assert.equal(filtered.nodes.length,2);
  assert.equal(filtered.edges.length,1);
 });
+
+
+test('Cross-Dataset Lab explains the one-dataset empty state and offers import actions',()=>{
+ const html=vm.runInContext(\`
+  state.did='ham';state.detail={dataset:{id:'ham',name:'HAM10000'},experiments:[]};
+  state.datasets=[{id:'ham',name:'HAM10000'}];
+  state.crossReadiness={targets:[],compatible_target_count:0};
+  renderCross()
+ \`,ctx);
+ assert.ok(html.includes('Only one dataset is currently loaded'));
+ assert.ok(html.includes('needs a second, independently collected dataset'));
+ assert.ok(html.includes('data-action="import"'));
+ assert.ok(html.includes('data-action="large-import"'));
+ assert.ok(!html.includes('id="crossTarget"'));
+});
+
+test('Cross-Dataset Lab explains incompatible candidates and disables external evaluation',()=>{
+ const html=vm.runInContext(\`
+  state.did='ham';state.detail={dataset:{id:'ham',name:'HAM10000'},experiments:[
+   {kind:'baseline',status:'completed',checkpoint_available:true}
+  ]};
+  state.datasets=[{id:'ham',name:'HAM10000'},{id:'path',name:'PathMNIST'}];
+  state.crossReadiness={targets:[{id:'path',name:'PathMNIST',sample_count:100,modality:'Histopathology',
+   compatible:false,reasons:['Declared modality does not match the source collection.']}]};
+  renderCross()
+ \`,ctx);
+ assert.ok(html.includes('No compatible target found'));
+ assert.ok(html.includes('PathMNIST'));
+ assert.ok(html.includes('Declared modality does not match'));
+ assert.ok(html.includes('disabled aria-disabled="true"'));
+ assert.ok(!html.includes('data-action="cross-launch"'));
+});
+
+test('Cross-Dataset Lab exposes only compatible target options',()=>{
+ const html=vm.runInContext(\`
+  state.did='ham';state.detail={dataset:{id:'ham',name:'HAM10000'},experiments:[
+   {kind:'baseline',status:'completed',checkpoint_available:true}
+  ]};
+  state.datasets=[{id:'ham',name:'HAM10000'},{id:'derma',name:'Derma collection'}];
+  state.crossReadiness={targets:[{id:'derma',name:'Derma collection',sample_count:120,modality:'Dermatoscopic images',
+   compatible:true,reasons:[]}]};
+  renderCross()
+ \`,ctx);
+ assert.ok(html.includes('id="crossTarget"'));
+ assert.ok(html.includes('value="derma"'));
+ assert.ok(html.includes('data-action="cross-launch"'));
+});
+
+test('Impact Simulator shows evidence prerequisites and prior failure instead of implying results exist',()=>{
+ const html=vm.runInContext(\`
+  state.did='ham';state.detail={dataset:{id:'ham',name:'HAM10000'},experiments:[]};
+  state.impactReadiness={ready:false,audit_completed:true,train_count:8000,test_count:1000,
+   confirmed_supported_findings:0,confirmed_training_samples:0,suspected_training_samples:4,
+   reasons:['No reviewer-confirmed supported finding is linked to a training image.'],
+   last_attempt:{status:'failed',error:'No confirmed training-sample findings.'}};
+  renderImpact()
+ \`,ctx);
+ assert.ok(html.includes('Impact experiment readiness'));
+ assert.ok(html.includes('Previous attempt did not complete'));
+ assert.ok(html.includes('No confirmed training-sample findings.'));
+ assert.ok(html.includes('data-action="go-review"'));
+ assert.ok(html.includes('Open Forensic Audit'));
+ assert.ok(html.includes('Eligible evidence types'));
+ assert.ok(!html.includes('Baseline macro-F1'));
+});
