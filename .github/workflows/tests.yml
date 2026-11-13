@@ -29,4 +29,4 @@ jobs:
       - name: Run research workflow tests
         run: python -m pytest -q
       - name: Run frontend routing regression tests
-        run: node --test tests/test_frontend_routes.cjs
+        run: node --test tests/test_frontend_routes.cjs tests/test_import_progress.cjs tests/test_notifications.cjs
