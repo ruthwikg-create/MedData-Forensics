@@ -606,7 +606,7 @@ def download_report(did:str,format:str='json'):
 def privacy():
     return {'processing':'local only','outbound_api_calls':False,'telemetry':False,'public_data_hosting':False,
       'storage':'data/ and artifacts/ outside frontend web root','database':'local SQLite default; PostgreSQL optional',
-      'uploads':'NPZ packages 256 MiB, ZIP packages 150 MiB; extension, size, archive traversal checks','authentication':'optional MDF_ACCESS_TOKEN; bind to 127.0.0.1 unless configured',
+      'uploads':'NPZ up to 256 MiB; legacy single-ZIP import up to 150 MiB; chunked ZIP+CSV import up to 12 GiB combined (8 GiB per file, 20 GiB expanded); per-image 20 MiB and 25 MP limits','authentication':'optional MDF_ACCESS_TOKEN; bind to 127.0.0.1 unless configured',
       'token_required':bool(os.getenv('MDF_ACCESS_TOKEN','')),
       'clinical_data_policy':'Use only authorized, de-identified or synthetic research data. No clinical care.'}
 
