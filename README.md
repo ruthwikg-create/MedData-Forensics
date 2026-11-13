@@ -33,7 +33,7 @@ Use **Create synthetic dataset** or **Import real research data** in any module 
 
 The **Add dataset** dialog now shows the real uploaded-byte percentage, followed by an indeterminate **Validating and indexing** phase. No invented indexing percentage or completion time is shown; large image imports may take time on CPU. On successful server confirmation, the dialog shows **Dataset imported successfully** and a **View Dataset DNA** action. The app updates its active dataset and retains the success message until you open the workspace. Failures remain visible with the returned validation error and a retry button. Repeat uploads are blocked while processing, and the dialog cannot be dismissed accidentally during an active import.
 
-**Important:** The local API currently handles dataset indexing synchronously. Its browser progress meter measures file transfer only; after transfer completes, the phase indicator remains active until the API responds. The maximum compressed upload size is 150 MiB. The original PathMNIST 196 MB NPZ must be reduced to a subset before importing. Do not assume the import succeeded until the success state appears in the modal and the dataset is visible in Dataset DNA.
+**Important:** The local API currently handles dataset indexing synchronously. Its browser progress meter measures file transfer only; after transfer completes, the phase indicator remains active until the API responds. Separate compressed-package limits apply: NPZ up to 256 MiB (including the standard PathMNIST NPZ), ZIP up to 150 MiB. The server keeps the existing 900 MiB NPZ expanded-data guard, array validation, and split sampling. Choose a small NPZ subset (500 images per split by default) when using a CPU laptop. Split sampling happens after upload and cannot shrink the source file. Do not assume the import succeeded until the success state appears in the modal and the dataset is visible in Dataset DNA.
 
 ## Quick start: Windows 11
 
@@ -106,7 +106,7 @@ The motivating methods and adjacent established work include Confident Learning 
 
 ### MedMNIST-compatible `.npz`
 
-`train_images`, `train_labels`, `val_images`, `val_labels`, `test_images`, `test_labels` arrays, all in one archive. Arrays must be 2D grayscale or RGB image collections with single class labels. Upload cap 150 MB. Max samples per split is set explicitly during import, default `2,000`. The resulting manifest records source counts and subset sampling. No pickle is loaded.
+`train_images`, `train_labels`, `val_images`, `val_labels`, `test_images`, `test_labels` arrays, all in one archive. Arrays must be 2D grayscale or RGB image collections with single class labels. Upload cap 256 MiB for `.npz` (ZIP remains 150 MiB). Max samples per split is set explicitly during import, default `500`. The resulting manifest records source counts and subset sampling. No pickle is loaded.
 
 ### Image ZIP + CSV
 

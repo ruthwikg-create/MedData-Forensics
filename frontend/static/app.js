@@ -26,6 +26,9 @@ const ICONS={
 function icon(name){return `<span class="icon" aria-hidden="true"><svg viewBox="0 0 24 24">${ICONS[name]||ICONS.info}</svg></span>`;}
 document.querySelectorAll('[data-icon]').forEach(n=>n.innerHTML=icon(n.dataset.icon));
 const $=s=>document.querySelector(s);
+const NPZ_UPLOAD_LIMIT_MIB=256;
+const ZIP_UPLOAD_LIMIT_MIB=150;
+function uploadLimitMiB(filename){return String(filename||'').toLowerCase().endsWith('.npz')?NPZ_UPLOAD_LIMIT_MIB:ZIP_UPLOAD_LIMIT_MIB;}
 const storage={get:(kind,key)=>{try{return window[kind].getItem(key)}catch{return null}},set:(kind,key,value)=>{try{window[kind].setItem(key,value)}catch{}}};
 const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const pct=x=>x==null?'—':(Number(x)*100).toFixed(1)+'%';
@@ -347,7 +350,7 @@ async function startAudit(){if(!state.did)return toast('Select a dataset first',
 async function launchExperiment(kind,config={}){if(!state.did)return toast('Select a dataset first',true);if(['shortcut','counterfactual','cross_dataset'].includes(kind)&&!bestExp('baseline')){toast('Train the CPU baseline first; open Model Failure Explorer.',true);return}try{const v=await api('/api/datasets/'+state.did+'/experiments',{method:'POST',body:JSON.stringify({kind,config})});toast(title(kind)+' experiment queued.');openJobs()}catch(e){toast(e.message,true)}}
 async function openJobs(){try{const rows=await api('/api/jobs');let html=`<p class="fine" style="margin-bottom:15px">Background CPU tasks continue while you explore the workbench. Refresh to check their status.</p><div class="data-list">${rows.length?rows.map(j=>`<div class="data-row"><div style="flex:1"><div class="row-label">${esc(title(j.kind))} ${pill(j.status,j.status==='completed'?'green':j.status==='failed'?'red':j.status==='running'?'amber':'')}</div><div class="row-desc">${esc(j.message)}</div>${j.status==='running'?`<div class="meter" style="margin-top:9px"><div class="meter-fill" style="width:${j.progress}%"></div></div>`:''}${j.error?`<p class="fine" style="color:var(--red);margin-top:7px">${esc(j.error)}</p>`:''}</div>${['queued','running'].includes(j.status)?`<button class="btn btn-small" data-cancel-job="${esc(j.id)}">Cancel</button>`:''}</div>`).join(''):empty('No background jobs','Run an audit or experiment to generate a task.')}</div><div class="actions">${btn(icon('rotate')+' Refresh jobs','jobs','btn-primary')}${btn('Refresh workspace','refresh','')}</div>`;openModal('Analysis jobs',html)}catch(e){toast(e.message,true)}}
 async function openImport(){
- const html=`<p class="fine" style="margin-bottom:20px">Upload a licensed dataset to your computer. No cloud transfer. NPZ supports MedMNIST train/val/test arrays; ZIP requires a root-level samples.csv with sample_id, image_path, label and split columns.</p>
+ const html=`<p class="fine" style="margin-bottom:20px">Upload an authorized dataset to this computer. NPZ files up to 256 MiB support MedMNIST train/val/test arrays; ZIP files up to 150 MiB require a root-level samples.csv with sample_id, image_path, label and split columns. No cloud transfer.</p>
  <form id="importForm"><div id="importFields"><div class="field"><label for="fileUpload">Dataset file (.npz or .zip)</label><input class="input" id="fileUpload" type="file" accept=".npz,.zip" required></div>
  <div class="field"><label for="datasetName">Dataset name</label><input class="input" id="datasetName" required minlength="2" maxlength="200" placeholder="e.g. DermaMNIST"></div>
  <div class="field-group"><div class="field"><label for="datasetSource">Source / provenance</label><input class="input" id="datasetSource" value="MedMNIST / Zenodo"></div><div class="field"><label for="datasetLicense">License / authorization</label><input class="input" id="datasetLicense" value="Verify dataset provider terms"></div></div>
@@ -374,7 +377,8 @@ async function openImport(){
    $('#importMilestoneIndex').className=done?'done':indexed?'active':'';
    $('#importMilestoneDone').className=done?'done':'';
   };
-  if(f.size>150*1024*1024){status.hidden=false;phase.textContent='File too large';pct.textContent='';stamp('This release accepts uploads up to 150 MB. PathMNIST (196 MB) must be converted to a smaller subset first.');status.classList.add('import-error');return;}
+  const limitMiB=uploadLimitMiB(f.name);
+  if(f.size>limitMiB*1024*1024){status.hidden=false;phase.textContent='File too large';pct.textContent='';stamp(`${f.name} is ${(f.size/(1024*1024)).toFixed(1)} MiB and exceeds the ${limitMiB} MiB ${f.name.toLowerCase().endsWith('.npz')?'NPZ':'ZIP'} limit. Selecting fewer images per split does not reduce the original upload size.`);status.classList.add('import-error');return;}
   const b=new FormData(); // Inputs use IDs, so populate the upload payload explicitly.
   b.append('file',f);b.append('name',$('#datasetName').value);b.append('source',$('#datasetSource').value);b.append('license',$('#datasetLicense').value);b.append('max_per_split',$('#maxImages').value);
   datasetImportInProgress=true;status.hidden=false;status.classList.remove('import-error','import-complete');

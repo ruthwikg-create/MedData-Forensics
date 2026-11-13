@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel,Field
 from sqlalchemy import select,func
 from .db import Session,DATA_ROOT,ARTIFACT_ROOT,Dataset,Sample,Finding,Review,AuditRun,Experiment,Job,jd,jl,now
-from .security import safe_path,extract_auth,MAX_ARCHIVE_BYTES,sha_file,manifest_hash
+from .security import safe_path,extract_auth,MAX_ARCHIVE_BYTES,MAX_NPZ_BYTES,sha_file,manifest_hash
 from .ingest import demo_dataset,import_zip,import_npz
 from .analysis_engine import forensic_graph,ranking_comparison
 from .labs import EXPERIMENT_RUNNERS
@@ -118,11 +118,13 @@ def add_demo(payload:DemoInput):
     return {'dataset_id':demo_dataset(payload.seed,payload.count),'message':'Generated synthetic geometry, not clinical images'}
 
 @app.post('/api/datasets/import')
-async def import_dataset(file:UploadFile=File(...),name:str=Form(...),source:str=Form('Local upload'),license:str=Form('Unspecified; verify authorization'),modality:str=Form('Biomedical 2D image'),max_per_split:int=Form(2000)):
+async def import_dataset(file:UploadFile=File(...),name:str=Form(...),source:str=Form('Local upload'),license:str=Form('Unspecified; verify authorization'),modality:str=Form('Biomedical 2D image'),max_per_split:int=Form(500)):
     if len(name.strip())<2 or len(name)>200:raise HTTPException(422,'Dataset name must have 2–200 characters')
     filename=(file.filename or '').lower()
     if not filename.endswith(('.npz','.zip')):raise HTTPException(415,'Upload a MedMNIST .npz or .zip containing samples.csv and images')
     suffix=Path(filename).suffix
+    upload_limit=MAX_NPZ_BYTES if suffix=='.npz' else MAX_ARCHIVE_BYTES
+    upload_limit_label='256 MiB' if suffix=='.npz' else '150 MiB'
     p=None
     try:
         with tempfile.NamedTemporaryFile(delete=False,suffix=suffix) as f:
@@ -131,7 +133,7 @@ async def import_dataset(file:UploadFile=File(...),name:str=Form(...),source:str
                 chunk=await file.read(1024*1024)
                 if not chunk:break
                 size+=len(chunk)
-                if size>MAX_ARCHIVE_BYTES:raise HTTPException(413,'Dataset package exceeds local upload cap (150 MB)')
+                if size>upload_limit:raise HTTPException(413,f'{suffix.upper()[1:]} package exceeds local upload cap ({upload_limit_label}); choose a smaller source archive')
                 f.write(chunk)
         try:
             if suffix=='.npz':did=import_npz(p,name,source,license,max_per_split)
@@ -375,7 +377,7 @@ def download_report(did:str,format:str='json'):
 def privacy():
     return {'processing':'local only','outbound_api_calls':False,'telemetry':False,'public_data_hosting':False,
       'storage':'data/ and artifacts/ outside frontend web root','database':'local SQLite default; PostgreSQL optional',
-      'uploads':'150 MB archives maximum; extension, size, archive traversal checks','authentication':'optional MDF_ACCESS_TOKEN; bind to 127.0.0.1 unless configured',
+      'uploads':'NPZ packages 256 MiB, ZIP packages 150 MiB; extension, size, archive traversal checks','authentication':'optional MDF_ACCESS_TOKEN; bind to 127.0.0.1 unless configured',
       'token_required':bool(os.getenv('MDF_ACCESS_TOKEN','')),
       'clinical_data_policy':'Use only authorized, de-identified or synthetic research data. No clinical care.'}
 

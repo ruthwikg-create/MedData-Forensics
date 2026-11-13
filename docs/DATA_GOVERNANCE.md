@@ -17,10 +17,10 @@ Research and educational quality assessment of properly licensed, appropriately 
 
 ## Limits
 
-- Uploaded ZIP or NPZ maximum: 150 MB; limit is configurable only by code change.
+- Uploaded NPZ maximum: 256 MiB, including standard PathMNIST-size sources; uploaded ZIP maximum: 150 MiB. These are independent server-enforced caps, not only browser checks.
 - ZIP uncompressed size maximum: 900 MB, maximum 12,000 entries, maximum 10,000 CSV rows.
 - Image maximum: 20 MB per file and 25 million decoded pixels.
-- NPZ import: 2D single-label images with height/width each ≤256, maximum 10,000 samples per split; default subset limit 2,000.
+- NPZ import: 2D single-label images with height/width each ≤256, maximum 10,000 samples per split; default subset limit 500.
 - Perceptual near-duplicate candidate retrieval is bounded for laptop feasibility; truncation is disclosed in audit metadata.
 
 ## Known gaps

@@ -33,10 +33,20 @@ test('validation errors are shown instead of being reported as success',async()=
  instances[0].emit('load');await assert.rejects(p,/size cap exceeded/);
 });
 test('import UI provides upload, indexing, success, and failure states',()=>{
- for(const marker of ['Uploading dataset','Validating and indexing','Dataset imported successfully','Import did not finish','role="status" aria-live="polite"','id="importProgress"','View Dataset DNA','This release accepts uploads up to 150 MB']) {
+ for(const marker of ['Uploading dataset','Validating and indexing','Dataset imported successfully','Import did not finish','role="status" aria-live="polite"','id="importProgress"','View Dataset DNA','NPZ files up to 256 MiB','ZIP files up to 150 MiB']) {
   assert.ok(source.includes(marker),`missing state: ${marker}`);
  }
  const css=fs.readFileSync(path.join(__dirname,'../frontend/static/styles.css'),'utf8');
  assert.ok(css.includes('prefers-reduced-motion'));
  assert.ok(css.includes('importSweep'));
+});
+
+test('different archive types use their separate hard limits',()=>{
+ const {ctx}=context();
+ const npz=vm.runInContext("uploadLimitMiB('pathmnist.npz')",ctx);
+ const zip=vm.runInContext("uploadLimitMiB('images.zip')",ctx);
+ assert.equal(npz,256);
+ assert.equal(zip,150);
+ assert.equal(vm.runInContext("uploadLimitMiB('PATHMNIST.NPZ')",ctx),256);
+ assert.ok(npz>zip);
 });
