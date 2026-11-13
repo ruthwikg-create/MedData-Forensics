@@ -83,7 +83,7 @@ def _stratified_subset_indices(labels, limit, seed=42):
     return np.sort(selected)
 
 
-def import_npz(path,name,source='MedMNIST',license='Check upstream source dataset license',max_samples_per_split=2000):
+def import_npz(path,name,source='MedMNIST',license='Check upstream source dataset license',max_samples_per_split=2000,modality='Other / unspecified'):
     """MedMNIST-compatible arrays only; bounded extraction, no pickle."""
     if max_samples_per_split<10 or max_samples_per_split>10000: raise ValueError('max_samples_per_split must be 10–10000')
     path=Path(path)
@@ -117,7 +117,7 @@ def import_npz(path,name,source='MedMNIST',license='Check upstream source datase
                           'evaluation_warning':'Class-preserving subset may not represent source prevalence; never report it as full-dataset evaluation.'}
             labels_seen.update(str(int(t)) for t in chosen_labels)
     with Session() as db:
-        d=_dataset(name,source,license,'Biomedical 2D image','MedMNIST-compatible NPZ import (bounded, no data downloaded automatically)',False,{'sampling':sizes,'subset':any(v['source_count']!=v['imported_count'] for v in sizes.values()),'label_ids':sorted(labels_seen)})
+        d=_dataset(name,source,license,modality,'MedMNIST-compatible NPZ import (bounded, no data downloaded automatically)',False,{'sampling':sizes,'subset':any(v['source_count']!=v['imported_count'] for v in sizes.values()),'label_ids':sorted(labels_seen)})
         db.add(d);db.flush()
         dest=DATA_ROOT/d.id/'images';dest.mkdir(parents=True,exist_ok=True)
         samples=[]
