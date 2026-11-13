@@ -126,12 +126,49 @@ async function uploadLargeResearchDataset(files,options,onProgress,onIndex,resum
  }
 }
 
+
+/** Keep browser File objects selected in separate dialogs without reading their bytes. */
+function mergeLargeImportFiles(existing,newFiles){
+ const result=[...existing];
+ for(const file of newFiles){
+  const key=String(file.name||'').toLowerCase();
+  const index=result.findIndex(item=>item.name.toLowerCase()===key);
+  if(index<0)result.push(file);else result[index]=file; // Re-selecting replaces that file.
+ }
+ return result;
+}
+function largeImportSelectionCheck(files){
+ const names=new Set(files.map(f=>f.name.toLowerCase()));
+ const ham=[...names].some(name=>/^ham10000_images_part_?[12]\.zip$/.test(name)||name==='ham10000_metadata.csv');
+ const hasZip=files.some(file=>file.name.toLowerCase().endsWith('.zip'));
+ const metadata=[...names].filter(name=>name.endsWith('.csv'));
+ const missing=[];
+ if(ham){
+  if(!names.has('ham10000_images_part_1.zip'))missing.push('HAM10000_images_part_1.zip');
+  if(!names.has('ham10000_images_part_2.zip'))missing.push('HAM10000_images_part_2.zip');
+  if(!names.has('ham10000_metadata.csv'))missing.push('HAM10000_metadata.csv');
+ }else{
+  if(!hasZip)missing.push('At least one image ZIP');
+  if(metadata.length===0)missing.push('Matching metadata CSV (samples.csv)');
+ }
+ const errors=[];
+ if(files.length>6)errors.push('Choose no more than 6 files');
+ if(files.some(f=>!/\.(zip|csv)$/i.test(f.name)))errors.push('Only ZIP and CSV files are supported');
+ if(files.some(f=>!Number.isSafeInteger(f.size)||f.size<=0||f.size>8*1024**3))
+  errors.push('Each file must be nonempty and at most 8 GiB');
+ if(files.reduce((sum,f)=>sum+f.size,0)>12*1024**3)errors.push('Combined upload exceeds 12 GiB');
+ if(metadata.length>1)errors.push('Choose exactly one metadata CSV');
+ return {ham,missing,errors,ready:files.length>0&&missing.length===0&&errors.length===0};
+}
+
 async function openLargeImport(){
- const body='<p class="fine">Large ZIP import uses 8 MiB sequential chunks stored locally, with real upload and indexing progress. Select all the necessary files at once; no cloud storage or paid API.</p>'+
-  '<p class="import-instructions"><strong>HAM10000:</strong> Select <code>HAM10000_metadata.csv</code>, <code>HAM10000_images_part_1.zip</code> and <code>HAM10000_images_part_2.zip</code> together. Without metadata, images cannot be assigned labels. The generated lesion-grouped split is exploratory, not patient-independent validation or an official benchmark.</p>'+
-  '<form id="largeImportForm"><div class="field"><label for="largeImportFiles">ZIP image archive(s) and metadata CSV</label>'+
-  '<input id="largeImportFiles" class="input" type="file" accept=".zip,.csv" multiple required>'+
-  '<small id="largeImportSummary" role="status" aria-live="polite">Choose the complete set of ZIP + CSV files (up to 8 GiB per file / 12 GiB combined).</small></div>'+
+ const body='<p class="fine">Large ZIP import uses 8 MiB sequential chunks stored locally. Add files one at a time, from different folders if needed. Your earlier selections stay in the queue; no cloud storage or paid API.</p>'+
+  '<p class="import-instructions"><strong>HAM10000:</strong> Add <code>HAM10000_images_part_1.zip</code>, <code>HAM10000_images_part_2.zip</code> and <code>HAM10000_metadata.csv</code> one at a time or together. Without matching metadata, images cannot be assigned labels. The generated lesion-grouped split is exploratory, not patient-independent validation or an official benchmark.</p>'+
+  '<form id="largeImportForm"><div class="field"><label for="largeImportFiles">Add image ZIP archives and metadata CSV</label>'+
+  '<input id="largeImportFiles" class="input" type="file" accept=".zip,.csv" multiple>'+
+  '<small id="largeImportSummary" role="status" aria-live="polite">Choose ZIP/CSV files, then use the file picker again to add more. Up to 8 GiB per file / 12 GiB total.</small>'+ 
+  '<ul id="largeImportFileQueue" class="large-import-file-queue" aria-label="Files selected for import"></ul>'+ 
+  '<p id="largeImportMissing" class="fine" role="status" aria-live="polite">Add the matching ZIP images and metadata CSV before starting.</p></div>'+
   '<div class="field"><label for="largeImportName">Dataset name</label><input id="largeImportName" class="input" type="text" minlength="2" maxlength="200" value="HAM10000" required></div>'+
   '<div class="field-group"><div class="field"><label for="largeImportSource">Dataset source</label><input id="largeImportSource" class="input" type="text" value="HAM10000 / Harvard Dataverse"></div>'+
   '<div class="field"><label for="largeImportLicense">License and authorized use</label><input id="largeImportLicense" class="input" type="text" value="Verify original dataset non-commercial terms"></div></div>'+
@@ -140,14 +177,36 @@ async function openLargeImport(){
   '<p id="largeImportMessage" role="status" aria-live="polite">Select files to begin.</p>'+
   '<p class="fine">During indexing, progress reflects actual processed image records. The local server must remain running. No estimated completion time is invented.</p></section>'+
   '<div id="largeImportResumeSection" class="large-import-resume" hidden><p class="fine">A previous transfer is saved on this computer. Re-select the same files if its upload was interrupted. Indexing can resume without files.</p><button class="btn btn-small" type="button" id="largeImportResume">Resume previous import</button> <button class="btn btn-small" type="button" id="largeImportDiscard">Discard staged files</button></div>'+ 
-  '<div class="actions"><button type="submit" class="btn btn-primary" id="largeImportStart">Import large dataset</button></div></form>';
+  '<div class="actions"><button type="submit" class="btn btn-primary" id="largeImportStart" disabled>Import large dataset</button></div></form>';
  openModal('Import large dataset',body);
  const filesInput=$('#largeImportFiles');
+ const queue=$('#largeImportFileQueue'),missingEl=$('#largeImportMissing');
+ const startButton=$('#largeImportStart');
+ let selectedFiles=[];
+ const renderFileQueue=()=>{
+  const check=largeImportSelectionCheck(selectedFiles);
+  const mib=selectedFiles.reduce((sum,f)=>sum+f.size,0)/1024/1024;
+  $('#largeImportSummary').textContent=selectedFiles.length?
+   selectedFiles.length+' selected file(s) · '+mib.toFixed(1)+' MiB. Add more files using Choose Files.':
+   'Choose ZIP/CSV files; click Choose Files again to add from another folder.';
+  queue.innerHTML=selectedFiles.map((f,i)=>'<li class="large-import-file-item"><span><strong>'+
+    esc(f.name)+'</strong><small>'+(f.size/(1024*1024)).toFixed(1)+' MiB</small></span>'+
+    '<button type="button" class="btn btn-small" data-large-remove="'+i+
+    '" aria-label="Remove '+esc(f.name)+' from import">Remove</button></li>').join('');
+  missingEl.textContent=check.errors.length?'Fix file selection: '+check.errors.join('; '):
+    check.ready?'All required files selected. You can start the import.':
+    'Still needed: '+check.missing.join(', ')+'.';
+  startButton.disabled=!check.ready;
+ };
  const previous=storage.get('localStorage','mdf-large-upload-session');
  $('#largeImportResumeSection').hidden=!previous;
  let resume=false;
  $('#largeImportResume').addEventListener('click',()=>{
-  resume=true;filesInput.required=false;$('#largeImportStart').click();filesInput.required=true;
+  resume=true;
+  // Resume may only need the persisted server-side indexing state.
+  startButton.disabled=false;
+  $('#largeImportForm').requestSubmit();
+  if(!datasetImportInProgress)renderFileQueue();
  });
  $('#largeImportDiscard').addEventListener('click',async()=>{
   const saved=storage.get('localStorage','mdf-large-upload-session');if(!saved)return;
@@ -157,29 +216,33 @@ async function openLargeImport(){
   }catch(error){toast(error.message,true)}
  });
  filesInput.addEventListener('change',()=>{
-  const files=[...filesInput.files];
-  const mib=files.reduce((sum,f)=>sum+f.size,0)/1024/1024;
-  $('#largeImportSummary').textContent=files.length+' file(s) · '+mib.toFixed(1)+' MiB total. '+files.map(f=>f.name).join(', ');
+  selectedFiles=mergeLargeImportFiles(selectedFiles,[...filesInput.files]);
+  filesInput.value=''; // Allow reselecting files without erasing the queue.
+  renderFileQueue();
  });
+ queue.addEventListener('click',event=>{
+  const btn=event.target.closest('[data-large-remove]');
+  if(!btn||datasetImportInProgress)return;
+  const index=Number(btn.dataset.largeRemove);
+  if(Number.isInteger(index)&&index>=0&&index<selectedFiles.length){
+   selectedFiles.splice(index,1);
+   renderFileQueue();
+  }
+ });
+ renderFileQueue();
  $('#largeImportForm').addEventListener('submit',async event=>{
   event.preventDefault();if(datasetImportInProgress)return;
-  const files=[...filesInput.files];
+  const files=[...selectedFiles];
   if(!files.length&&!resume)return;
   const sessionToResume=resume?storage.get('localStorage','mdf-large-upload-session'):null;
   resume=false;
-  const names=files.map(f=>f.name.toLowerCase());
-  const ham=names.some(n=>/^ham10000_images_part_?[12]\.zip$/.test(n));
-  const hasFirst=names.some(n=>/^ham10000_images_part_?1\.zip$/.test(n));
-  const hasSecond=names.some(n=>/^ham10000_images_part_?2\.zip$/.test(n));
+  const selection=largeImportSelectionCheck(files);
   const tracker=$('#largeImportTracker'),phase=$('#largeImportPhase'),percent=$('#largeImportPercent');
   const bar=$('#largeImportProgress'),message=$('#largeImportMessage'),button=$('#largeImportStart');
   tracker.hidden=false;tracker.classList.remove('import-error','import-complete');
   const errorText=text=>{tracker.classList.add('import-error');phase.textContent='Missing or unsupported files';message.textContent=text};
-  if(ham&&(!hasFirst||!hasSecond||!names.includes('ham10000_metadata.csv'))){
-   errorText('For HAM10000, select HAM10000_metadata.csv and both image ZIP parts in the same selection.');return;
-  }
-  if(files.length>6||files.some(f=>f.size>8*1024**3)||files.reduce((n,f)=>n+f.size,0)>12*1024**3){
-   errorText('Safety limits: at most 6 files, 8 GiB per file, 12 GiB total.');return;
+  if(!sessionToResume&&!selection.ready){
+   errorText([...selection.errors,...selection.missing.map(name=>'Missing '+name)].join('; '));return;
   }
   const options={name:$('#largeImportName').value.trim(),source:$('#largeImportSource').value.trim(),
    license:$('#largeImportLicense').value.trim(),modality:'Biomedical 2D image'};
@@ -200,7 +263,8 @@ async function openLargeImport(){
    closeModal();await refresh(true);await navigate('dna');
    toast('Large dataset imported successfully. Verify Dataset DNA and split provenance.');
   }catch(error){
-   datasetImportInProgress=false;$('#modalClose').disabled=false;filesInput.disabled=false;button.disabled=false;
+   datasetImportInProgress=false;$('#modalClose').disabled=false;filesInput.disabled=false;
+   renderFileQueue();
    tracker.classList.add('import-error');phase.textContent='Import failed';
    message.textContent=error.message||String(error);
    toast('Large dataset import failed. See the message in the dialog.',true);
