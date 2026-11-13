@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter,defaultdict
 import hashlib, json, os, platform, random, sys, time, subprocess
 from pathlib import Path
+from types import SimpleNamespace
 import joblib, numpy as np, sklearn, scipy
 from PIL import Image, ImageEnhance,ImageFilter
 from sqlalchemy import select
@@ -292,11 +293,27 @@ def run_cross_dataset(exp_id,progress=None):
         target_id=cfg.get('target_dataset_id')
         if not target_id or target_id==d.id:raise ValueError('Choose a separate target dataset')
         target,external=_load(db,target_id);base,model=_latest_model(db,d.id)
-        source_classes=set(model.classes_.tolist());target_classes=set(s.label for s in external)
-        if source_classes!=target_classes:
-            raise ValueError('Incompatible label vocabularies: explicit research-valid mapping is required before cross-dataset evaluation')
+        source_classes=set(str(x) for x in model.classes_.tolist())
+        target_classes=set(str(s.label) for s in external)
         if d.modality!=target.modality:
-            raise ValueError('Different declared modalities; mapping and compatibility review required')
+            raise ValueError('Different declared modalities; cross-dataset evaluation is blocked')
+        supplied_mapping=cfg.get('target_label_mapping')
+        if supplied_mapping is None:
+            if source_classes!=target_classes:
+                raise ValueError('Incompatible label vocabularies: provide an explicit one-to-one target-to-source label mapping')
+            label_mapping={label:label for label in target_classes}
+            mapping_confirmed=False
+        else:
+            if cfg.get('label_mapping_confirmed') is not True:
+                raise ValueError('Explicit class mapping has not been confirmed by the researcher')
+            if not isinstance(supplied_mapping,dict):
+                raise ValueError('Target label mapping must be a JSON object')
+            label_mapping={str(k):str(v) for k,v in supplied_mapping.items()}
+            if set(label_mapping)!=target_classes:
+                raise ValueError('Label mapping must include every decodable target class exactly once')
+            if set(label_mapping.values())!=source_classes or len(set(label_mapping.values()))!=len(label_mapping):
+                raise ValueError('Label mapping must map one-to-one onto every source model class')
+            mapping_confirmed=True
         source_hashes={x.sha256 for x in samples if x.sha256}
         overlaps=sum(x.sha256 in source_hashes for x in external if x.sha256)
         if overlaps:
@@ -310,10 +327,17 @@ def run_cross_dataset(exp_id,progress=None):
         if duplicate_pixels:
             raise ValueError(f'Cross-dataset comparison blocked: {duplicate_pixels} target images match decoded source pixels, including possible re-encodings')
         test=[s for s in external if s.split=='test'][:500]
-        if not test:raise ValueError('Target dataset needs a test partition')
+        if not test:raise ValueError('Target dataset needs a decodable test partition')
+        mapped_test=[SimpleNamespace(
+            id=s.id,sample_id=s.sample_id,label=label_mapping[str(s.label)],split=s.split,
+            site=s.site,group_id=s.group_id,group_type=s.group_type,relpath=s.relpath,
+            sha256=s.sha256
+        ) for s in test]
         if progress:progress(25,'Evaluating frozen model on external images')
         outcome={'source_dataset_id':d.id,'target_dataset_id':target_id,'base_experiment_id':base.id,
-            'external_test':_score(model,test,42),'license_notice':target.license,'comparison_limits':['Matching text labels and modality do not prove clinical equivalence.','Byte-for-byte and decoded-pixel identity checks cannot establish patient independence or rule out near duplicates.','Dataset shift may reflect confounding or differences in labels or acquisition.'],'manifest':_manifest(d,cfg,42)}
+            'external_test':_score(model,mapped_test,42),'label_mapping':label_mapping,
+            'label_mapping_confirmed':mapping_confirmed,
+            'license_notice':target.license,'comparison_limits':['Matching text labels and modality do not prove clinical equivalence.','Any explicit class mapping must be justified from the dataset documentation and independently reviewed.','Byte-for-byte and decoded-pixel identity checks cannot establish patient independence or rule out near duplicates.','Dataset shift may reflect confounding or differences in labels or acquisition.'],'manifest':_manifest(d,cfg,42)}
         e.result=jd(outcome);e.status='completed';e.finished_at=now();db.commit()
         if progress:progress(100,'Cross-dataset evaluation complete')
         return outcome
