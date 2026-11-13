@@ -18,7 +18,8 @@ MedData Forensics imports image classification datasets, identifies potential da
 
 I build research-oriented software that helps make biomedical data more trustworthy and AI experiments easier to inspect. With MedData Forensics, my goal is to help researchers explore dataset integrity, potential leakage, model failure patterns, and reproducible evidence without claiming clinical validation where it has not been established.
 
-**GitHub:** [@ruthwikg-create](https://github.com/ruthwikg-create)
+**GitHub:** [@ruthwikg-create](https://github.com/ruthwikg-create)  
+**LinkedIn:** [Ruthwik Goparaju](https://www.linkedin.com/in/ruthwik-goparaju/)
 
 
 
