@@ -13,7 +13,7 @@ if ($LASTEXITCODE -ne 0) { throw "Python compilation failed" }
 $Node = Get-Command node -ErrorAction SilentlyContinue
 if ($Node) {
     Write-Host "Running frontend routing tests..." -ForegroundColor Cyan
-    & node --test tests/test_frontend_routes.cjs tests/test_import_progress.cjs
+    & node --test tests/test_frontend_routes.cjs tests/test_import_progress.cjs tests/test_notifications.cjs
     if ($LASTEXITCODE -ne 0) { throw "Frontend navigation tests failed" }
 } else {
     Write-Warning "Node.js is not installed. Frontend routing tests were NOT run."
