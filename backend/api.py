@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel,Field
 from sqlalchemy import select,func
 from .db import Session,DATA_ROOT,ARTIFACT_ROOT,Dataset,Sample,Finding,Review,AuditRun,Experiment,Job,jd,jl,now
-from .security import safe_path,extract_auth,MAX_ARCHIVE_BYTES,MAX_NPZ_BYTES,sha_file,manifest_hash
+from .security import safe_path,extract_auth,valid_master_token,new_session,revoke_session,SESSION_SECONDS,MAX_ARCHIVE_BYTES,MAX_NPZ_BYTES,sha_file,manifest_hash
 from .ingest import demo_dataset,import_zip,import_npz,SUPPORTED_MODALITIES
 from .large_import import CHUNK_BYTES,create_session,append_chunk,begin_processing,process_session,discard_session,status as large_import_status
 from .analysis_engine import forensic_graph,ranking_comparison
@@ -41,6 +41,13 @@ async def security_middleware(request,call_next):
     response.headers['X-Frame-Options']='DENY'
     response.headers['Referrer-Policy']='no-referrer'
     response.headers['Cache-Control']='no-store'
+    if request.url.path not in ('/api/docs','/api/redoc'):
+        # The SPA uses same-origin scripts and explicit inline visual styles.
+        # API documentation has a separate Swagger UI script policy.
+        response.headers['Content-Security-Policy']=(
+            "default-src 'self'; base-uri 'none'; object-src 'none'; "
+            "frame-ancestors 'none'; form-action 'self'; script-src 'self'; "
+            "style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'")
     return response
 
 class DemoInput(BaseModel):
@@ -94,10 +101,26 @@ def _enqueue(db,kind,target_id):
 
 @app.post('/api/session')
 def authorize_session(request:Request):
-    if not extract_auth(request):raise HTTPException(401,'Incorrect local access token')
+    # Only presentation of the workstation secret can create a new session;
+    # a stolen or expired cookie cannot silently renew itself.
+    if os.getenv('MDF_ACCESS_TOKEN'):
+        if not valid_master_token(request.headers.get('X-MDF-Token','')):
+            raise HTTPException(401,'Incorrect local access token')
+    elif not extract_auth(request):
+        raise HTTPException(401,'Local access requires a loopback connection or an access token')
     response=JSONResponse({'authenticated':True,'message':'Local access granted for this browser session'})
     if os.getenv('MDF_ACCESS_TOKEN'):
-        response.set_cookie('mdf_access',os.getenv('MDF_ACCESS_TOKEN'),httponly=True,samesite='strict',secure=False,path='/',max_age=8*3600)
+        response.set_cookie('mdf_access',new_session(),httponly=True,samesite='strict',
+                            secure=request.url.scheme=='https' or os.getenv('MDF_SECURE_COOKIES')=='1',
+                            path='/',max_age=SESSION_SECONDS)
+    return response
+
+@app.post('/api/logout')
+def logout_session(request:Request):
+    revoke_session(request.cookies.get('mdf_access',''))
+    response=JSONResponse({'authenticated':False,'message':'Browser session ended'})
+    response.delete_cookie('mdf_access',path='/',samesite='strict',
+                           secure=request.url.scheme=='https' or os.getenv('MDF_SECURE_COOKIES')=='1')
     return response
 
 @app.get('/api/health')
@@ -650,7 +673,11 @@ def download_report(did:str,format:str='json'):
         if format=='json':return Response(json.dumps(content,indent=2,default=str),media_type='application/json',headers={'Content-Disposition':f'attachment; filename={fname}.json'})
         if format=='csv':
             output=io.StringIO();writer=csv.DictWriter(output,fieldnames=['id','kind','severity','status','title','confidence','priority','sample_id','linked_id'])
-            writer.writeheader();writer.writerows([{k:getattr(f,k) for k in writer.fieldnames} for f in rows])
+            def safe_csv_cell(value):
+                if isinstance(value,str) and value.lstrip().startswith(('=','+','-','@')):
+                    return "'"+value
+                return value
+            writer.writeheader();writer.writerows([{k:safe_csv_cell(getattr(f,k)) for k in writer.fieldnames} for f in rows])
             return Response(output.getvalue(),media_type='text/csv',headers={'Content-Disposition':f'attachment; filename={fname}.csv'})
         if format=='html':
             esc=html.escape
@@ -663,7 +690,7 @@ def download_report(did:str,format:str='json'):
 def privacy():
     return {'processing':'local only','outbound_api_calls':False,'telemetry':False,'public_data_hosting':False,
       'storage':'data/ and artifacts/ outside frontend web root','database':'local SQLite default; PostgreSQL optional',
-      'uploads':'NPZ up to 256 MiB; legacy single-ZIP import up to 150 MiB; chunked ZIP+CSV import up to 12 GiB combined (8 GiB per file, 20 GiB expanded); per-image 20 MiB and 25 MP limits','authentication':'optional MDF_ACCESS_TOKEN; bind to 127.0.0.1 unless configured',
+      'uploads':'NPZ up to 256 MiB; legacy single-ZIP import up to 150 MiB; chunked ZIP+CSV import up to 12 GiB combined (8 GiB per file, 20 GiB expanded); per-image 20 MiB and 25 MP limits','authentication':'optional MDF_ACCESS_TOKEN; loopback-only without a secret, opaque revocable HttpOnly sessions when enabled',
       'token_required':bool(os.getenv('MDF_ACCESS_TOKEN','')),
       'clinical_data_policy':'Use only authorized, de-identified or synthetic research data. No clinical care.'}
 
