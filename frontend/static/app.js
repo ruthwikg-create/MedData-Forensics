@@ -82,8 +82,8 @@ function bars(data,max=0,filter=''){
   const middle='<span class="bar-label" title="'+esc(k)+'">'+esc(k)+'</span>'+
    '<span class="meter" aria-hidden="true"><span class="meter-fill" style="width:'+Math.max(0,Math.min(100,100*Number(v)/peak))+'%"></span></span>'+
    '<span class="bar-val">'+number(v)+'</span>';
-  return filter?'<button class="bar-row chart-bar" type="button" data-dna-chart="'+esc(filter)+
-   '" data-dna-value="'+esc(k)+'" aria-label="Filter research images by '+esc(filter)+' '+esc(k)+', '+number(v)+' records">'+middle+'</button>':
+  return filter?'<button class="bar-row chart-bar'+(state.dnaFilters?.[filter]===k?' is-selected':'')+'" type="button" data-dna-chart="'+esc(filter)+
+   '" data-dna-value="'+esc(k)+'" aria-pressed="'+(state.dnaFilters?.[filter]===k)+'" aria-label="Filter research images by '+esc(filter)+' '+esc(k)+', '+number(v)+' records">'+middle+'</button>':
    '<div class="bar-row">'+middle+'</div>';
  }).join(''):'<p class="fine">No distribution available.</p>';
 }
