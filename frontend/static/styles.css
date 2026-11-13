@@ -396,3 +396,7 @@ button.cm-cell small{font-size:11px;color:var(--ink);font-weight:650}
 .cross-label-mapping .check-row{display:flex;align-items:flex-start;gap:10px;margin-top:16px;font-size:12px;line-height:1.5;font-weight:600}
 .cross-label-mapping .check-row input{width:18px;height:18px;flex:0 0 18px;margin-top:1px;accent-color:var(--teal)}
 .cross-label-mapping select:focus-visible,.cross-label-mapping input:focus-visible{outline:3px solid #b6d4f7;outline-offset:2px}
+
+.cross-independence-check{display:flex;align-items:flex-start;gap:10px;margin:16px 0;padding:14px;border:1px solid var(--border);border-radius:10px;background:var(--surface);font-size:12px;line-height:1.55;font-weight:620}
+.cross-independence-check input{width:18px;height:18px;flex:0 0 18px;margin-top:1px;accent-color:var(--teal)}
+.cross-independence-check input:focus-visible{outline:3px solid #b6d4f7;outline-offset:2px}
