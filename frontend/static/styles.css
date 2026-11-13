@@ -321,3 +321,22 @@ button.cm-cell small{font-size:11px;color:var(--ink);font-weight:650}
 .graph-card:hover .graph-card-bg,.graph-card:focus-visible .graph-card-bg{stroke:var(--blue);stroke-width:2;filter:drop-shadow(0 2px 4px rgba(24,40,47,.13))}
 .node-graph{overscroll-behavior-inline:contain}
 @media (prefers-reduced-motion:reduce){.graph-card-bg{transition:none}}
+
+
+/* Large dataset importer: accessible, readable, responsive. */
+.import-large-entry,.import-instructions,.large-import-resume{
+  border:1px solid var(--border);background:var(--surface);
+  border-radius:var(--radius);padding:14px 16px;margin:12px 0 18px;
+}
+.import-large-entry .fine,.large-import-resume .fine{margin:8px 0 0}
+.import-instructions{line-height:1.65;font-size:13px;overflow-wrap:anywhere}
+.import-instructions code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:.95em}
+.import-tracker progress{width:100%;accent-color:var(--teal)}
+#largeImportMessage{font-size:13px;line-height:1.5;overflow-wrap:anywhere;margin:12px 0}
+#largeImportFiles:focus-visible,#largeImportResume:focus-visible,#largeImportDiscard:focus-visible{
+  outline:3px solid var(--blue);outline-offset:2px
+}
+@media(max-width:640px){
+ .import-large-entry,.import-instructions,.large-import-resume{padding:12px;margin:10px 0 16px}
+ .large-import-resume button{margin:4px 5px 4px 0}
+}
