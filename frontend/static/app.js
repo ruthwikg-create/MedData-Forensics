@@ -357,17 +357,53 @@ function baselineReadinessPanel(){
     failure+missing+
     '<p class="fine">This check does not guarantee training success or independent test records. The full leakage and file checks run in the background job.</p></div>');
 }
+function renderFailureGallery(experiment){
+ const result=experiment?.result?.test||{},predictions=result.predictions||[];
+ const labels=result.metrics?.labels||[];
+ const cell=String(state.failureCell||'');
+ const ids=cell.match(/^([0-9]+):([0-9]+)$/);
+ const selected=ids&&labels[Number(ids[1])]!==undefined&&labels[Number(ids[2])]!==undefined;
+ const actual=selected?labels[Number(ids[1])]:null,predicted=selected?labels[Number(ids[2])]:null;
+ const rows=predictions.filter(p=>selected?String(p.actual)===String(actual)&&String(p.predicted)===String(predicted):!p.correct);
+ const display=rows.slice(0,36);
+ const heading=selected?'Actual '+String(actual)+' → Predicted '+String(predicted):'Misclassified research samples';
+ const cards=display.map(p=>'<button type="button" class="record" data-sample="'+esc(p.sample_db_id)+'">'+
+  '<img src="/files/'+esc(p.sample_db_id)+'" alt="Research image '+esc(p.sample_id)+'" loading="lazy">'+
+  '<div class="record-content"><span class="record-name">'+esc(p.sample_id)+'</span>'+
+  '<span class="record-label">'+esc(p.actual)+' → '+esc(p.predicted)+'</span></div></button>').join('');
+ return '<section class="card card-padded" id="failureGallery" aria-live="polite">'+
+  '<div class="card-title"><h3>'+esc(heading)+'</h3>'+pill(number(rows.length)+' samples',selected?'blue':'amber')+'</div>'+
+  (selected?'<div class="failure-filter-context"><p>Showing the selected confusion-matrix cell. Counts reflect supplied research labels, not clinical ground truth.</p>'+
+   '<button type="button" class="btn btn-small" data-action="failure-reset">Show all errors</button></div>':'')+
+  '<div class="record-grid">'+cards+'</div>'+
+  (!rows.length?empty(selected?'No records in this cell':'No disagreements on this test split',
+     'This does not establish clinical reliability. Select another cell or review the full evaluation.'):'')+
+  (rows.length>36?'<p class="fine">Showing the first 36 matching image records.</p>':'')+'</section>';
+}
+function updateFailureExplorer(){
+ const e=bestExp('baseline');if(!e)return;
+ const gallery=$('#failureGallery');
+ if(gallery)gallery.outerHTML=renderFailureGallery(e);
+ document.querySelectorAll('[data-confusion]').forEach(button=>{
+  const pressed=button.dataset.confusion===state.failureCell;
+  button.setAttribute('aria-pressed',String(pressed));
+  button.classList.toggle('is-selected',pressed);
+ });
+}
 function renderFailures(){let html=head('PERFORMANCE INVESTIGATION','Model Failure Explorer','Inspect prediction mistakes, confusion matrices, uncertainty and performance across recorded source groups.',btn(icon('play')+' Run baseline','baseline-launch','btn-primary'));
  if(!state.detail)return html+needDataset();
  html+=baselineReadinessPanel();
  const e=bestExp('baseline');if(!e){const failed=state.detail?.experiments?.some(x=>x.kind==='baseline'&&x.status==='failed');return html+(failed?notice('The last baseline model failed. Open Analysis Jobs to read the error, then select Run baseline to retry after updating the software.','warn'):'')+empty('No completed model evaluation yet','Train the CPU baseline to examine test-split misclassifications. For failed attempts, use Analysis Jobs to review the exact error.',btn('Train baseline model','baseline-launch','btn-primary')+' '+btn('View failed jobs','jobs'));}
  const r=e.result.test||{},m=r.metrics||{},errors=(r.predictions||[]).filter(x=>!x.correct);
  html+=notice('These are research-label disagreements from a lightweight model. Misclassification is not a verified clinical diagnosis error.');
+ if(e.result.training_warnings?.length)html+=notice('Training cautions: '+e.result.training_warnings.join(' '),'warn');
  html+=`<div class="stats-row">${stat('Test macro-F1',metric(m.macro_f1),'Bootstrap interval: '+((m.macro_f1_ci95||[]).map(metric).join(' to ')||'n/a'))}${stat('Balanced accuracy',metric(m.balanced_accuracy),'Class-balanced test metric')}${stat('Test errors',number(errors.length),'Disagreements with supplied labels')}${stat('Calibration error',metric(m.expected_calibration_error),'Exploratory ECE; lower is better')}</div>`;
- const cm=m.confusion_matrix||[];let mat='';if(cm.length){const mx=Math.max(1,...cm.flat());mat=`<div class="cm-grid" style="grid-template-columns:repeat(${cm.length},minmax(0,1fr))">${cm.flatMap((row,i)=>row.map((v,j)=>`<div class="cm-cell" title="Actual ${esc(m.labels[i])}; Predicted ${esc(m.labels[j])}" style="background:rgba(33,117,104,${(.08+.65*v/mx).toFixed(2)})">${number(v)}<small>${i===j?'correct':'error'}</small></div>`)).join('')}</div><p class="fine" style="margin-top:13px">Rows: actual labels · columns: predicted labels. ${esc((m.labels||[]).join(' · '))}</p>`;}
+ const cm=m.confusion_matrix||[];let mat='';if(cm.length){const mx=Math.max(1,...cm.flat());mat=`<div class="cm-grid" style="grid-template-columns:repeat(${cm.length},minmax(0,1fr))">${cm.flatMap((row,i)=>row.map((v,j)=>{
+ const id=i+':'+j,active=state.failureCell===id,actual=m.labels?.[i]||'',predicted=m.labels?.[j]||'';
+ return `<button type="button" class="cm-cell ${active?'is-selected':''}" data-confusion="${id}" aria-pressed="${active}" aria-label="Inspect ${number(v)} test images, actual ${esc(actual)}, predicted ${esc(predicted)}" title="Inspect actual ${esc(actual)}; predicted ${esc(predicted)}" style="background:rgba(33,117,104,${(.08+.65*v/mx).toFixed(2)})">${number(v)}<small>${i===j?'correct':'error'}</small></button>`;})).join('')}</div><p class="fine" style="margin-top:13px">Rows: actual labels · columns: predicted labels. ${esc((m.labels||[]).join(' · '))}. Select any cell to inspect its actual image records.</p>`;}
  html+=`<div class="two-col equal">${card('Confusion matrix',mat||'<p>No confusion matrix reported.</p>')}${card('Performance by recorded site',`<div class="data-list">${(r.subgroups||[]).map(s=>`<div class="data-row"><div><div class="row-label">${esc(s.name)}</div><div class="row-desc">${s.n} samples</div></div><strong>${s.metric==null?'Insufficient data':pct(s.metric)}</strong></div>`).join('')}</div><p class="fine" style="margin-top:12px">Exploratory subgroup metrics only; no fairness conclusion.</p>`)}</div>`;
  html+=`<div class="two-col equal section-gap">${card('Per-class performance',`<div class="table-wrap"><table><thead><tr><th>Recorded class</th><th>Precision</th><th>Recall</th><th>F1</th><th>N</th></tr></thead><tbody>${(m.labels||[]).map(l=>{const x=m.per_class?.[l]||{};return `<tr><td>${esc(l)}</td><td>${metric(x.precision)}</td><td>${metric(x.recall)}</td><td>${metric(x['f1-score'])}</td><td>${number(x.support)}</td></tr>`}).join('')}</tbody></table></div>`)}${card('Calibration by confidence',`<p class="fine" style="margin-bottom:12px">Empirical accuracy in bins of predicted confidence. Small bins have high uncertainty.</p>${(m.calibration_bins||[]).map(b=>`<div class="bar-row"><span class="bar-label">${Math.round(b.lower*100)}–${Math.round(b.upper*100)}%</span><div class="meter"><div class="meter-fill" style="width:${Math.round(b.empirical_accuracy*100)}%"></div></div><span class="bar-val">${number(b.n)} img</span></div>`).join('')}`)}</div>`;
- html+=`<section class="card card-padded"><div class="card-title"><h3>Misclassified research samples</h3>${pill(number(errors.length)+' errors','amber')}</div><div class="record-grid">${errors.slice(0,36).map(x=>`<button type="button" class="record" data-sample="${esc(x.sample_db_id)}"><img src="/files/${esc(x.sample_db_id)}" alt="Misclassified research sample ${esc(x.sample_id)}" loading="lazy"><div class="record-content"><span class="record-name">${esc(x.sample_id)}</span><span class="record-label">${esc(x.actual)} → ${esc(x.predicted)}</span></div></button>`).join('')}</div>${!errors.length?empty('No disagreements on this test split','This does not imply real-world model reliability.'):''}</section>`;
+ html+=renderFailureGallery(e);
  return html;
 }
 function renderRepro(){const d=state.detail?.dataset;let html=head('SCIENTIFIC TRACEABILITY','Reproducibility Engine','Reopen experiments, inspect immutable manifests and export transparent research audit records.',d?btn(icon('download')+' Export JSON report','download-json','btn-primary'):'');
@@ -633,10 +669,12 @@ async function showExperiment(id){try{const e=await api('/api/experiments/'+id);
 async function handleAction(action){switch(action){case 'import':return openImport();case 'demo':return openDemo();case 'create-demo':return createDemo();case 'run-audit':return startAudit();case 'jobs':return openJobs();case 'jobs-history':return openJobs(true);case 'clear-job-notifications':return clearJobNotifications();case 'refresh':return refresh(true);case 'graph-zoom-in':state.graphUi.zoom=Math.min(1.5,Math.round((state.graphUi.zoom+0.25)*100)/100);return updateGraphExplorer();
  case 'graph-zoom-out':state.graphUi.zoom=Math.max(0.75,Math.round((state.graphUi.zoom-0.25)*100)/100);return updateGraphExplorer();
  case 'graph-reset':state.graphUi={search:'',severity:'all',links:'all',zoom:1};$('#main').innerHTML=renderGraph();drawGraph(state.graph);return;
+ case 'failure-reset':state.failureCell='';return updateFailureExplorer();
  case 'rankings':{state.rankingBudget=Number($('#rankingBudget')?.value||4);const target=$('#rankingResult');if(target)target.innerHTML='<div class="rank-pending" role="status">Comparing real candidate order…</div>';state.rankings=await api('/api/datasets/'+state.did+'/rankings?budget='+state.rankingBudget);if(target)target.innerHTML=renderRankings();return;}case 'filter-findings':state.activeFilters={kind:$('#findingKind')?.value||'',status:$('#findingStatus')?.value||''};state.findingPage=1;return render();case 'filter-samples':state.sampleFilter=`&split=${encodeURIComponent($('#dnaSplit').value)}&label=${encodeURIComponent($('#dnaLabel').value)}&search=${encodeURIComponent($('#dnaSearch').value)}`;state.samplePage=1;return render();case 'go-audit':return navigate('audit');case 'go-privacy':return navigate('privacy');case 'baseline-launch':return launchExperiment('baseline',{seed:42});case 'shortcut':return launchExperiment('shortcut',{seed:42});case 'impact':return launchExperiment('impact',{seed:42});case 'counterfactual-launch':{const sid=$('#counterSample')?.value;if(!sid)return toast('Select a research image first',true);return launchExperiment('counterfactual',{sample_id:sid,strength:Number($('#counterfactualAmount')?.value||40)/100})}case 'cross-launch':{const did=$('#crossTarget')?.value;if(!did)return toast('Select a target dataset first',true);return launchExperiment('cross_dataset',{target_dataset_id:did})}case 'scenario-launch':return launchExperiment('scenario',{seed:Number($('#scenarioSeed').value),label_flip_rate:Number($('#scenarioRate').value)});case 'verify-integrity':{if(!state.did)return toast('Select a dataset first',true);try{const info=await api('/api/datasets/'+state.did+'/verify');const target=$('#integrityResults');if(target)target.innerHTML=`<div class="notice ${info.passed?'':'warning'}" style="margin-top:12px"><strong>${info.passed?'Integrity check passed':'Integrity check found issues'}</strong><p>Files checked: ${number(info.checked_files)} · Problems: ${number(info.problem_count)}</p><p class="fine">${esc((info.problems||[]).slice(0,5).map(p=>p.kind+': '+(p.sample_id||'manifest')).join('; ') || 'No recorded mismatches.')}</p></div>`;}catch(e){toast(e.message,true)}return;}case 'download-json':window.location.href='/api/datasets/'+state.did+'/report?format=json';return;case 'auth-prompt':openModal('Local access token',`<div class="field"><label for="authToken">MDF_ACCESS_TOKEN</label><input class="input" type="password" id="authToken" placeholder="Enter configured token"></div>${btn('Authenticate','save-token','btn-primary')}`);return;case 'save-token':storage.set('sessionStorage','mdf-token',$('#authToken').value);await api('/api/session',{method:'POST'});toast('Authenticated for this local session');return;default:toast('Unknown control: '+action,true)}}
 document.addEventListener('click',async e=>{
  const nav=e.target.closest('[data-view]');if(nav){navigate(nav.dataset.view);return}
  const act=e.target.closest('[data-action]');if(act){act.disabled=true;try{await handleAction(act.dataset.action)}catch(err){toast(err.message,true)}finally{if(act.isConnected)act.disabled=false}return}
+ const matrix=e.target.closest('[data-confusion]');if(matrix){state.failureCell=matrix.dataset.confusion;updateFailureExplorer();return}
  const dataset=e.target.closest('[data-dataset]');if(dataset){changeDataset(dataset.dataset.dataset);return}
  const f=e.target.closest('[data-finding]');if(f){openFinding(f.dataset.finding);return}
  const s=e.target.closest('[data-sample]');if(s){openSample(s.dataset.sample);return}
