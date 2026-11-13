@@ -213,3 +213,7 @@ The ten final acceptance criteria are tracked explicitly in [docs/ACCEPTANCE_AUD
 ```
 
 The Windows script checks Python backend tests and, when Node.js is installed, frontend routing tests. For a real-data smoke test use `scripts/Run-RealDataset-Sanity.ps1` after reviewing the data license. Do not treat successfully opening the app as proof that all research validation criteria are met.
+
+### Clear analysis notifications
+
+Open the **bell** in the top-right corner to view **Notifications & analysis jobs**. Choose **Clear** beside a completed, failed, or cancelled job, or **Clear notifications** to dismiss all finished-job notices at once. Active/running jobs cannot be dismissed and remain visible. Clearing affects notification visibility in the current browser (stored in local storage); it **does not delete** job records, failed-job error messages, audit findings, experiments, or datasets. Use **Show recent history** in the bell dialog to inspect cleared job messages (the API returns the latest 35 jobs). The bell indicator includes active jobs and uncleared finished jobs.
