@@ -8,7 +8,7 @@ from PIL import Image, ImageEnhance,ImageFilter
 from sqlalchemy import select
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score,balanced_accuracy_score,f1_score,roc_auc_score,confusion_matrix,classification_report
-from .db import Session,Dataset,Sample,Finding,Review,Experiment,ARTIFACT_ROOT,DATA_ROOT,now,jd,jl
+from .db import Session,Dataset,Sample,Finding,Review,Experiment,AuditRun,ARTIFACT_ROOT,DATA_ROOT,now,jd,jl
 from .analysis_engine import extract_features,DETECTOR_VERSION
 from .security import safe_path,sha_file,manifest_hash
 
@@ -318,21 +318,91 @@ def run_cross_dataset(exp_id,progress=None):
         if progress:progress(100,'Cross-dataset evaluation complete')
         return outcome
 
+
+IMPACT_FINDING_KINDS=frozenset({
+    'split_leakage','group_overlap','exact_duplicate','pixel_duplicate','near_duplicate','label_suspicion'
+})
+
+def _impact_exclusion_ids(db,d,train):
+    train_ids={sample.id for sample in train}
+    confirmed=db.scalars(select(Finding).where(
+        Finding.dataset_id==d.id,Finding.status=='confirmed'
+    )).all()
+    exclusions=set()
+    for finding in confirmed:
+        if finding.kind not in IMPACT_FINDING_KINDS:
+            continue
+        for sample_id in (finding.sample_id,finding.linked_id):
+            if sample_id and sample_id in train_ids:
+                exclusions.add(sample_id)
+    return exclusions,confirmed
+
+def _impact_readiness(db,d,samples):
+    train=[sample for sample in samples if sample.split=='train']
+    test=[sample for sample in samples if sample.split=='test']
+    exclusions,confirmed=_impact_exclusion_ids(db,d,train)
+    supported_confirmed=[finding for finding in confirmed
+        if finding.kind in IMPACT_FINDING_KINDS and
+        (finding.sample_id in {s.id for s in train} or finding.linked_id in {s.id for s in train})]
+    suspected=db.scalars(select(Finding).where(
+        Finding.dataset_id==d.id,Finding.status=='suspected',
+        Finding.kind.in_(IMPACT_FINDING_KINDS)
+    )).all()
+    train_ids={sample.id for sample in train}
+    suspected_train_ids={sid for finding in suspected
+        for sid in (finding.sample_id,finding.linked_id) if sid and sid in train_ids}
+    audit=db.scalar(select(AuditRun).where(
+        AuditRun.dataset_id==d.id,AuditRun.status=='completed'
+    ).order_by(AuditRun.created_at.desc()).limit(1))
+    curated=[sample for sample in train if sample.id not in exclusions]
+    fit_train=_select_training_subset(train,seed=42)
+    fit_ids={sample.id for sample in fit_train}
+    fit_exclusions=exclusions & fit_ids
+    fit_curated=[sample for sample in fit_train if sample.id not in exclusions]
+    reasons=[]
+    if not audit:
+        reasons.append('Run a completed Forensic Audit before using the Impact Simulator.')
+    if not test:
+        reasons.append('A held-out test split is required and must remain unchanged.')
+    if not exclusions:
+        reasons.append('No reviewer-confirmed supported finding is linked to a training image. In Review Center, inspect an image-linked finding and confirm it only if its evidence supports the concern.')
+    if len(curated)<20 or len({sample.label for sample in curated})<2:
+        if exclusions:
+            reasons.append('Removing the confirmed training records would leave fewer than 20 images or fewer than 2 classes.')
+    if exclusions and not fit_exclusions:
+        reasons.append('The confirmed records are outside the deterministic 2,400-image CPU training subset. A different documented sampling plan is required.')
+    if fit_exclusions and (len(fit_curated)<20 or len({sample.label for sample in fit_curated})<2):
+        reasons.append('Removing the confirmed records would leave too few images or classes in the CPU model-fit subset.')
+    return {
+        'ready':not reasons,'reasons':reasons,
+        'audit_completed':bool(audit),
+        'train_count':len(train),'test_count':len(test),
+        'curated_train_count':len(curated),
+        'confirmed_supported_findings':len(supported_confirmed),
+        'confirmed_training_samples':len(exclusions),
+        'suspected_training_samples':len(suspected_train_ids),
+        'other_confirmed_findings':max(0,len(confirmed)-len(supported_confirmed)),
+        'supported_finding_kinds':sorted({finding.kind for finding in supported_confirmed}),
+        'model_fit_train_count':len(fit_train),
+        'confirmed_exclusions_in_model_fit':len(fit_exclusions),
+        'note':'Only reviewer-confirmed, supported image-linked findings that point to the training split can be excluded. Labels and original images are never overwritten.'
+    }
+
+def impact_readiness(db,dataset_id):
+    d,samples=_load(db,dataset_id)
+    return _impact_readiness(db,d,samples)
+
 def run_impact(exp_id,progress=None):
     """Removal-only ablation of REVIEW-CONFIRMED training findings, never alters reference dataset."""
     with Session() as db:
         e=db.get(Experiment,exp_id);d,samples=_load(db,e.dataset_id);cfg=jl(e.config)
         train=[s for s in samples if s.split=='train'];test=[s for s in samples if s.split=='test']
         if not test:raise ValueError('A fixed test split is required')
-        confirmed=db.scalars(select(Finding).where(Finding.dataset_id==d.id,Finding.status=='confirmed')).all()
-        exclusions=set()
-        for f in confirmed:
-            if f.kind not in ('split_leakage','group_overlap','exact_duplicate','pixel_duplicate','near_duplicate','label_suspicion'):continue
-            for sid in [f.sample_id,f.linked_id]:
-                if sid and any(x.id==sid and x.split=='train' for x in train):exclusions.add(sid)
-        if not exclusions:raise ValueError('No confirmed training-sample findings. Review and confirm a supported issue first.')
+        readiness=_impact_readiness(db,d,samples)
+        if not readiness['ready']:
+            raise ValueError('Impact Simulator is not ready: '+' '.join(readiness['reasons']))
+        exclusions,_=_impact_exclusion_ids(db,d,train)
         curated=[s for s in train if s.id not in exclusions]
-        if len(curated)<20 or len(set(x.label for x in curated))<2:raise ValueError('Exclusions leave too few training examples')
         validation=[s for s in samples if s.split=='val']
         _,safe_test,integrity=_evaluation_integrity(train,validation,test)
         if progress:progress(18,'Training original baseline on fixed training split')
