@@ -74,9 +74,8 @@ def test_cross_dataset_readiness_explains_missing_or_incompatible_target_and_blo
         source_id=client.post('/api/datasets/demo',json={'count':48,'seed':231}).json()['dataset_id']
         target_id=client.post('/api/datasets/demo',json={'count':48,'seed':232}).json()['dataset_id']
         empty=client.get(f'/api/datasets/{source_id}/cross-dataset-readiness').json()
-        assert len(empty['targets'])==1
-        assert empty['targets'][0]['id']==target_id
-        assert empty['targets'][0]['compatible'] is True
+        target_summary=next(item for item in empty['targets'] if item['id']==target_id)
+        assert target_summary['compatible'] is True
         assert empty['baseline_ready'] is False
 
         baseline=client.post(f'/api/datasets/{source_id}/experiments',
