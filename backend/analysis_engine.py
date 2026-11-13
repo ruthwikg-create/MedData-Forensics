@@ -77,8 +77,19 @@ def audit(dataset_id,run_id,progress=None):
             try:
                 p=safe_path(s.relpath);width,height=image_info(p)
                 s.width=width;s.height=height
-                s.sha256=sha_file(p);s.pixelhash=pixel_fingerprint(p);s.phash=phash_image(p)
-                bucket_sha[s.sha256].append(s);bucket_px[s.pixelhash].append(s)
+                observed_sha=sha_file(p)
+                # Imported file hashes are immutable evidence. An audit must
+                # never silently rewrite them after a file has been altered.
+                if not s.sha256:
+                    findings.append(create_finding(run,dataset,'integrity','Missing original file hash',
+                        'No import-time SHA-256 is recorded for this image.',s,None,1.,'high',
+                        {'observed_sha256':observed_sha}))
+                elif observed_sha!=s.sha256:
+                    findings.append(create_finding(run,dataset,'integrity','File differs from import-time hash',
+                        'Local image bytes no longer match the immutable original SHA-256.',s,None,1.,'critical',
+                        {'expected_sha256':s.sha256,'observed_sha256':observed_sha}))
+                s.pixelhash=pixel_fingerprint(p);s.phash=phash_image(p)
+                bucket_sha[observed_sha].append(s);bucket_px[s.pixelhash].append(s)
                 if s.group_id:bucket_group[(s.group_type or 'unspecified',s.group_id)].append(s)
                 valid.append(s)
             except (ValueError,OSError) as exc:
