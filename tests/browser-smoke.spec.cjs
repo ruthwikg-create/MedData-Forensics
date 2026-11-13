@@ -161,7 +161,7 @@ test('Cross-Dataset, Impact and Reproducibility work through their real UI contr
  await page.goto('/#/repro');
  await page.locator('#datasetSelect').selectOption(source);
  await expect(page.getByRole('heading',{name:'Reproducibility Engine'})).toBeVisible();
- await expect(page.getByText('Dataset fingerprint')).toBeVisible();
+ await expect(page.getByRole('heading',{name:'Dataset fingerprint'})).toBeVisible();
  const downloadPromise=page.waitForEvent('download');
  await page.locator('[data-action="download-repro"]').click();
  const download=await downloadPromise;
