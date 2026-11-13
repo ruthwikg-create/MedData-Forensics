@@ -196,3 +196,13 @@ test('a completed baseline row without a checkpoint cannot unlock model labs',()
  assert.ok(results[2].includes('previous model file is missing'));
  assert.ok(results[2].includes('Train baseline'));
 });
+
+test('ranking comparison explains completed audits with no candidate findings',()=>{
+ const out=vm.runInContext("state.rankings={strategies:[],message:'Audit completed with no candidate findings. There is nothing to compare.'};renderRankings()",ctx);
+ assert.ok(out.includes('There is nothing to compare.'));
+});
+test('Compare button is disabled when audit has zero findings',()=>{
+ const out=vm.runInContext("state.detail={dataset:{id:'demo',name:'No-finding set'},audits:[{status:'completed',summary:{total_findings:0,valid_samples:42,by_kind:{}}}]};state.findings={items:[],count:0};state.rankings={strategies:[],message:'Audit completed with no candidate findings.'};renderAudit()",ctx);
+ assert.ok(out.includes('disabled title="No detector findings are available to compare"'));
+ assert.ok(out.includes('Audit completed with no candidate findings'));
+});
