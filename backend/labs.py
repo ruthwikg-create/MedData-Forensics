@@ -195,9 +195,13 @@ def run_shortcut(exp_id,progress=None):
     """Source-label association and occlusion sensitivity; neither establishes causation."""
     with Session() as db:
         e=db.get(Experiment,exp_id);d,samples=_load(db,e.dataset_id);base,model=_latest_model(db,d.id)
-        test=[s for s in samples if s.split=='test'][:160]
-        if not test:raise ValueError('Requires test images')
-        if progress:progress(20,'Testing control and region-masked images')
+        train=[s for s in samples if s.split=='train']
+        validation=[s for s in samples if s.split=='val']
+        all_test=[s for s in samples if s.split=='test']
+        if not all_test:raise ValueError('Requires test images')
+        _,safe_test,integrity=_evaluation_integrity(train,validation,all_test)
+        test=safe_test[:160]
+        if progress:progress(20,'Testing leakage-screened control and masked images')
         def mask_features(s,kind):
             with Image.open(safe_path(s.relpath)) as im:
                 im=im.convert('RGB')
@@ -211,7 +215,7 @@ def run_shortcut(exp_id,progress=None):
         orig=_pred(model,test);masked=model.predict_proba(np.vstack([mask_features(s,'corner_mask') for s in test]))
         flip=int(np.sum(np.argmax(orig,axis=1)!=np.argmax(masked,axis=1)))
         conf_change=float(np.mean(np.abs(np.max(orig,axis=1)-np.max(masked,axis=1))))
-        output={'baseline_experiment_id':base.id,'test_n':len(test),'region':'upper-left approximately 14% corner','prediction_flip_rate':flip/len(test),
+        output={'baseline_experiment_id':base.id,'test_n':len(test),'evaluation_integrity':integrity,'region':'upper-left approximately 14% corner','prediction_flip_rate':flip/len(test),
             'mean_max_confidence_change':conf_change,'distribution_shift_test':'controlled corner masking','caveat':'Image occlusion may change important image content; changes do not prove shortcut learning. Test confounds and controls before causal claims.',
             'manifest':_manifest(d,jl(e.config),42)}
         e.result=jd(output);e.status='completed';e.finished_at=now();db.commit()
@@ -274,12 +278,21 @@ def run_cross_dataset(exp_id,progress=None):
             raise ValueError('Different declared modalities; mapping and compatibility review required')
         source_hashes={x.sha256 for x in samples if x.sha256}
         overlaps=sum(x.sha256 in source_hashes for x in external if x.sha256)
-        if overlaps:raise ValueError(f'Cross-dataset comparison blocked: {overlaps} target images have identical content hashes in the source dataset')
+        if overlaps:
+            raise ValueError(f'Cross-dataset comparison blocked: {overlaps} target images share exact file hashes with the source dataset')
+        if progress:progress(15,'Screening decoded image identities across datasets')
+        from .analysis_engine import pixel_fingerprint
+        def image_identity(sample):
+            return sample.pixelhash or pixel_fingerprint(safe_path(sample.relpath))
+        source_pixels={image_identity(x) for x in samples}
+        duplicate_pixels=sum(image_identity(x) in source_pixels for x in external)
+        if duplicate_pixels:
+            raise ValueError(f'Cross-dataset comparison blocked: {duplicate_pixels} target images match decoded source pixels, including possible re-encodings')
         test=[s for s in external if s.split=='test'][:500]
         if not test:raise ValueError('Target dataset needs a test partition')
         if progress:progress(25,'Evaluating frozen model on external images')
         outcome={'source_dataset_id':d.id,'target_dataset_id':target_id,'base_experiment_id':base.id,
-            'external_test':_score(model,test,42),'license_notice':target.license,'comparison_limits':['Matching text labels and modality do not prove clinical equivalence.','Dataset shift may reflect confounding or differences in labels or acquisition.'],'manifest':_manifest(d,cfg,42)}
+            'external_test':_score(model,test,42),'license_notice':target.license,'comparison_limits':['Matching text labels and modality do not prove clinical equivalence.','Byte-for-byte and decoded-pixel identity checks cannot establish patient independence or rule out near duplicates.','Dataset shift may reflect confounding or differences in labels or acquisition.'],'manifest':_manifest(d,cfg,42)}
         e.result=jd(outcome);e.status='completed';e.finished_at=now();db.commit()
         if progress:progress(100,'Cross-dataset evaluation complete')
         return outcome
