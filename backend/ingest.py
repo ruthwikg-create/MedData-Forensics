@@ -6,7 +6,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 from sqlalchemy import select
 from .db import DATA_ROOT,Session,Dataset,Sample,uid,jd
-from .security import image_info,sha_file,safe_path,MAX_ARCHIVE_BYTES,ALLOWED_EXT,manifest_hash
+from .security import image_info,sha_file,safe_path,MAX_ARCHIVE_BYTES,MAX_NPZ_BYTES,ALLOWED_EXT,manifest_hash
 
 DEMO_LABELS=['pattern_a','pattern_b']  # explicitly synthetic and nonmedical
 
@@ -62,7 +62,7 @@ def import_npz(path,name,source='MedMNIST',license='Check upstream source datase
     """MedMNIST-compatible arrays only; bounded extraction, no pickle."""
     if max_samples_per_split<10 or max_samples_per_split>10000: raise ValueError('max_samples_per_split must be 10–10000')
     path=Path(path)
-    if path.stat().st_size>MAX_ARCHIVE_BYTES:raise ValueError('NPZ upload exceeds 150MB safety cap; select a smaller variant')
+    if path.stat().st_size>MAX_NPZ_BYTES:raise ValueError('NPZ upload exceeds 256 MiB safety cap; select a smaller variant')
     with zipfile.ZipFile(path) as container:
         if len(container.infolist())>24 or sum(item.file_size for item in container.infolist())>900*1024*1024:
             raise ValueError('NPZ expanded data exceeds safety limits')
