@@ -135,7 +135,7 @@ def import_npz(path,name,source='MedMNIST',license='Check upstream source datase
         db.add_all(samples);d.manifest_hash=manifest_hash(samples);db.commit()
         return d.id
 
-def import_zip(path,name,source='User-provided image/CSV package',license='Unspecified; verify authorization', modality='Biomedical 2D image'):
+def import_zip(path,name,source='User-provided image/CSV package',license='Unspecified; verify authorization', modality='Other / unspecified'):
     """ZIP must contain samples.csv and image files; strict traversal/size limits."""
     path=Path(path)
     if path.stat().st_size>MAX_ARCHIVE_BYTES:raise ValueError('ZIP upload exceeds 150MB limit')
