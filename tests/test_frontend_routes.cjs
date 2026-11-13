@@ -373,6 +373,9 @@ test('Impact Simulator shows evidence prerequisites and prior failure instead of
   renderImpact()
  `,ctx);
  assert.ok(html.includes('Impact experiment readiness'));
+ assert.ok(html.includes('Complete prerequisites first'));
+ assert.ok(html.includes('disabled aria-disabled="true"'));
+ assert.ok(!html.includes('data-action="impact"'));
  assert.ok(html.includes('Previous attempt did not complete'));
  assert.ok(html.includes('No confirmed training-sample findings.'));
  assert.ok(html.includes('data-action="go-review"'));
