@@ -93,13 +93,18 @@ test('real-data ranking compare displays candidate order without inventing verif
  assert.ok(result.includes('No validated defect yield'));
  assert.ok(!result.includes('known injected defects'));
 });
-test('evidence graph renders an explicit sample inventory when no audit has completed',()=>{
+test('evidence graph draws isolated real sample nodes without invented links',()=>{
  const result=vm.runInContext(`state.detail={dataset:{id:'demo',name:'Research set'}};state.graph={audit_completed:false,network_mode:'sample_inventory',finding_count:0,nodes:[{id:'s:s1',label:'image-1',type:'sample',split:'train'}],edges:[],note:'No completed audit.'};renderGraph()`,ctx);
- assert.ok(!result.includes('id="nodeGraph"'),'no disconnected line-only SVG should be shown');
- assert.ok(result.includes('No detector-linked image relationships'));
- assert.ok(result.includes('data-sample="s1"'));
+ assert.ok(result.includes('id="nodeGraph"'));
+ assert.ok(result.includes('isolated real dataset nodes'));
  assert.ok(result.includes('No completed audit'));
  assert.ok(result.includes('data-action="run-audit"'));
+ const box={innerHTML:'',querySelectorAll:()=>[]};
+ ctx.document.querySelector=sel=>sel==='#nodeGraph'?box:null;
+ vm.runInContext('drawGraph(state.graph)',ctx);
+ assert.ok(box.innerHTML.includes('data-node="s:s1"'));
+ assert.ok(!box.innerHTML.includes('<path'), 'no detector links means no connecting lines');
+ delete ctx.document.querySelector;
 });
 test('shortcut and counterfactual make a trained baseline a visible prerequisite',()=>{
  const result=vm.runInContext(`state.detail={dataset:{id:'demo',name:'Research set'},experiments:[]};state.samples={items:[{id:'a',sample_id:'image-1',label:'0',split:'test',image_url:'/files/a'}]};[renderShortcut(),renderCounterfactual()]`,ctx);
@@ -136,11 +141,17 @@ test('evidence graph displays linked findings as accessible, scrollable node car
  assert.ok(box.innerHTML.includes('stroke-opacity=".8"'));
  delete ctx.document.querySelector;
 });
-test('dataset-wide findings without image evidence show a list, not invented edges',()=>{
- const html=vm.runInContext("state.detail={dataset:{id:'demo',name:'Research set'}};state.graph={audit_completed:true,network_mode:'evidence',finding_count:1,nodes:[{id:'f:f1',type:'finding',label:'source association',status:'suspected'}],edges:[],note:'Dataset-wide association only'};renderGraph()",ctx);
- assert.ok(!html.includes('id="nodeGraph"'));
+test('global-only findings produce inspectable unlinked graph nodes without invented edges',()=>{
+ const html=vm.runInContext("state.detail={dataset:{id:'demo',name:'Research set'}};state.graph={audit_completed:true,network_mode:'sample_inventory',finding_count:1,nodes:[{id:'s:s1',label:'image-1',split:'train',type:'sample'},{id:'f:f1',type:'finding',label:'source association',status:'suspected'}],edges:[],note:'Dataset-wide association only'};renderGraph()",ctx);
+ assert.ok(html.includes('id="nodeGraph"'));
  assert.ok(html.includes('data-finding="f1"'));
- assert.ok(html.includes('No detector-linked image relationships'));
+ const box={innerHTML:'',querySelectorAll:()=>[]};
+ ctx.document.querySelector=sel=>sel==='#nodeGraph'?box:null;
+ vm.runInContext("drawGraph(state.graph)",ctx);
+ assert.ok(box.innerHTML.includes('data-node="s:s1"'));
+ assert.ok(box.innerHTML.includes('data-node="f:f1"'));
+ assert.ok(!box.innerHTML.includes('<path'),'no unsupported links may be drawn');
+ delete ctx.document.querySelector;
 });
 
 test('approved transparent MedData Forensics wordmark replaces the old sidebar logo',()=>{
@@ -161,4 +172,11 @@ test('approved transparent MedData Forensics wordmark replaces the old sidebar l
  const css=fs.readFileSync(path.join(__dirname,'../frontend/static/styles.css'),'utf8');
  assert.ok(css.includes('.brand-wordmark{display:block'));
  assert.ok(css.includes('aspect-ratio:874/288'));
+});
+
+test('baseline failure provides a clear Analysis Jobs link',()=>{
+ const html=vm.runInContext("state.detail={dataset:{id:'demo',name:'Research set'},experiments:[{kind:'baseline',status:'failed',result:{}}]};renderFailures()",ctx);
+ assert.ok(html.includes('The last baseline model failed'));
+ assert.ok(html.includes('data-action="jobs"'));
+ assert.ok(html.includes('data-action="baseline-launch"'));
 });
