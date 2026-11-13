@@ -5,7 +5,8 @@ from PIL import Image, UnidentifiedImageError
 from .db import DATA_ROOT
 
 MAX_IMAGE_BYTES = 20*1024*1024
-MAX_ARCHIVE_BYTES = 150*1024*1024
+MAX_ARCHIVE_BYTES = 150*1024*1024  # ZIP packages: retain strict compressed-size cap
+MAX_NPZ_BYTES = 256*1024*1024  # NPZ packages: includes standard PathMNIST archive
 MAX_PIXELS = 25_000_000
 Image.MAX_IMAGE_PIXELS = MAX_PIXELS
 ALLOWED_EXT={'.png','.jpg','.jpeg','.webp','.bmp','.tif','.tiff'}
