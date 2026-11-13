@@ -96,3 +96,56 @@ test('HAM10000 large uploader includes metadata and part integrity instructions'
  assert.ok(source.includes('Resume previous import'));
  assert.ok(source.includes('Discard staged files'));
 });
+
+test('large-file selection retains parts across multiple picker openings',()=>{
+ const ctx=vm.createContext({document:{querySelectorAll:()=>[]},window:{},console});
+ vm.runInContext(renderSource,ctx,{filename:'frontend/static/app.js'});
+ const parts=[
+  {name:'HAM10000_images_part_1.zip',size:1303*1024*1024},
+  {name:'HAM10000_images_part_2.zip',size:1144*1024*1024},
+  {name:'HAM10000_metadata.csv',size:563881}
+ ];
+ ctx.fileA=parts[0];ctx.fileB=parts[1];ctx.fileC=parts[2];
+ let status=vm.runInContext('largeImportSelectionCheck([fileA])',ctx);
+ assert.equal(status.ready,false);
+ assert.ok(status.missing.includes('HAM10000_images_part_2.zip'));
+ assert.ok(status.missing.includes('HAM10000_metadata.csv'));
+ let files=vm.runInContext('mergeLargeImportFiles([fileA],[fileB])',ctx);
+ assert.equal(files.length,2);
+ status=vm.runInContext('largeImportSelectionCheck(files)',Object.assign(ctx,{files}));
+ assert.equal(status.ready,false);
+ assert.deepEqual(Array.from(status.missing),['HAM10000_metadata.csv']);
+ files=vm.runInContext('mergeLargeImportFiles(files,[fileC])',Object.assign(ctx,{files}));
+ status=vm.runInContext('largeImportSelectionCheck(files)',Object.assign(ctx,{files}));
+ assert.equal(status.ready,true);
+ assert.deepEqual(Array.from(status.missing),[]);
+ assert.equal(files.length,3);
+ const replacement={name:'ham10000_images_part_2.zip',size:99};
+ ctx.replacement=replacement;
+ files=vm.runInContext('mergeLargeImportFiles(files,[replacement])',Object.assign(ctx,{files}));
+ assert.equal(files.length,3,'reselecting same filename must replace, never double-import');
+ assert.equal(files[1],replacement);
+});
+
+test('large importer provides removable queue and never requires one picker selection',()=>{
+ assert.ok(source.includes('id="largeImportFileQueue"'));
+ assert.ok(source.includes('id="largeImportMissing"'));
+ assert.ok(source.includes('data-large-remove'));
+ assert.ok(source.includes('selectedFiles=mergeLargeImportFiles(selectedFiles,[...filesInput.files])'));
+ assert.ok(source.includes("filesInput.value=''"));
+ assert.ok(source.includes('const files=[...selectedFiles]'));
+ assert.ok(!source.includes('id="largeImportFiles" class="input" type="file" accept=".zip,.csv" multiple required'));
+});
+
+test('large ZIP+CSV picker rejects metadata-free or unsupported inputs',()=>{
+ const ctx=vm.createContext({document:{querySelectorAll:()=>[]},window:{},console});
+ vm.runInContext(renderSource,ctx,{filename:'frontend/static/app.js'});
+ ctx.incomplete=[{name:'images.zip',size:100000}];
+ ctx.ready=[...ctx.incomplete,{name:'samples.csv',size:2048}];
+ ctx.multiple=[...ctx.ready,{name:'second.csv',size:300}];
+ ctx.npz=[{name:'archive.npz',size:400000}];
+ assert.equal(vm.runInContext('largeImportSelectionCheck(incomplete).ready',ctx),false);
+ assert.equal(vm.runInContext('largeImportSelectionCheck(ready).ready',ctx),true);
+ assert.equal(vm.runInContext('largeImportSelectionCheck(multiple).ready',ctx),false);
+ assert.equal(vm.runInContext('largeImportSelectionCheck(npz).ready',ctx),false);
+});
