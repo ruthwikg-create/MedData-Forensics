@@ -1,5 +1,9 @@
 # MedData Forensics
 
+<p align="center">
+  <img src="assets/meddata-forensics-logo.png" alt="MedData Forensics — biomedical dataset investigation and AI reliability research" width="460">
+</p>
+
 **Local-first biomedical AI dataset investigation and reproducibility workbench.**
 
 > **RESEARCH ONLY.** This software does not diagnose patients, establish image-label truth, certify a medical device, validate a model for clinical use, or establish a dataset's clinical suitability. All new/demo test results refer only to synthetic geometric phantoms unless a dataset is explicitly identified as an independently sourced research dataset. No real-world model validation or accepted research-paper contribution is claimed.
