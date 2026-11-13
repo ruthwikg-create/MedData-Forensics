@@ -11,7 +11,7 @@ Research and educational quality assessment of properly licensed, appropriately 
 - Reports and model artifacts are stored under `artifacts/` with restricted file extension serving.
 - Uploaded ZIP content is checked for traversal and symlinks, count and decompressed size caps. Images are decoded with pixel/size checks before analysis.
 - `.npz` uses `allow_pickle=False`; array dimensions and split structure are validated.
-- Server binds to `127.0.0.1` by default. Optional `MDF_ACCESS_TOKEN` supports session-cookie authentication; **this is not a production identity system**.
+- Server binds to `127.0.0.1` by default. Optional `MDF_ACCESS_TOKEN` supports revocable, process-local 8-hour HttpOnly browser sessions. The master secret is not stored in the cookie or browser storage. Connections without a configured secret are limited to loopback peers. This remains a single-user research access gate, **not a production identity system**.
 - `data/` and `artifacts/` are excluded from Git. Never commit patient information, user credentials, raw third-party datasets or trained weights with ambiguous licenses.
 - No telemetry, cloud inference, remote API calls or automatic dataset downloads.
 
