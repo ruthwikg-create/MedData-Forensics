@@ -72,7 +72,9 @@ def finding_out(f):
       'audit_id':f.audit_id,'created_at':stamp(f.created_at),'detector':f.detector,'evidence':jl(f.evidence)}
 
 def experiment_out(e):
+    checkpoint_available=bool((ARTIFACT_ROOT / e.id / 'baseline.joblib').is_file()) if e.kind=='baseline' else None
     return {'id':e.id,'dataset_id':e.dataset_id,'kind':e.kind,'status':e.status,'config':jl(e.config),'result':jl(e.result),
+      'checkpoint_available':checkpoint_available,
       'created_at':stamp(e.created_at),'finished_at':stamp(e.finished_at)}
 
 def get_dataset(db,id):
@@ -94,7 +96,7 @@ def authorize_session(request:Request):
 
 @app.get('/api/health')
 def health():
-    return {'status':'ok','version':'0.9.0-research','analysis':'local research only','worker_enabled':os.getenv('MDF_NO_AUTOWORKER','0')!='1','storage':str(DATA_ROOT)}
+    return {'status':'ok','version':'0.9.2-research','analysis':'local research only','worker_enabled':os.getenv('MDF_NO_AUTOWORKER','0')!='1','storage':str(DATA_ROOT)}
 
 @app.get('/api/overview')
 def overview():
@@ -156,6 +158,58 @@ def dataset_detail(did:str):
             'groups_with_ids':sum(bool(s.group_id) for s in rows),'sites':dict(Counter(s.site or 'unknown' for s in rows)),
             'audits':[{'id':a.id,'status':a.status,'summary':jl(a.summary),'created_at':stamp(a.created_at)} for a in audits],
             'experiments':[experiment_out(e) for e in experiments]}
+
+def _baseline_readiness(db,did):
+    """Fast preflight. Decoded-pixel leakage checks still run inside the worker."""
+    rows=db.scalars(select(Sample).where(Sample.dataset_id==did)).all()
+    valid=[s for s in rows if s.width and s.height]
+    train=[s for s in valid if s.split=='train']
+    test=[s for s in valid if s.split=='test']
+    classes=Counter(s.label for s in train)
+    reasons=[]
+    warnings=[]
+    if len(train)<20:
+        reasons.append(f'At least 20 decodable training images are needed; found {len(train)}.')
+    if len(classes)<2:
+        reasons.append(f'At least 2 training classes are needed; found {len(classes)}. Re-import a class-preserving subset or use a larger dataset.')
+    if not test:
+        reasons.append('At least one held-out test image is required. Check train/val/test split metadata.')
+    if classes and min(classes.values())<3:
+        warnings.append('At least one class has fewer than 3 training examples; exploratory results will be unstable.')
+    invalid=len(rows)-len(valid)
+    if invalid:
+        warnings.append(f'{invalid} images were excluded because dimensions or decoding metadata are missing.')
+    if test:
+        train_ids={('file',s.sha256) for s in train if s.sha256}
+        train_ids.update(('group',s.group_type or 'unspecified',s.group_id) for s in train if s.group_id)
+        possibly_independent=0
+        for s in test:
+            tokens=set()
+            if s.sha256:tokens.add(('file',s.sha256))
+            if s.group_id:tokens.add(('group',s.group_type or 'unspecified',s.group_id))
+            if not tokens.intersection(train_ids):
+                possibly_independent+=1
+        if not possibly_independent:
+            reasons.append('All test images overlap training under recorded file hashes or group identifiers; create a valid independent test split.')
+        else:
+            warnings.append('Full decoded-image leakage screening runs during training; additional test samples may be excluded.')
+    attempts=db.scalars(select(Experiment).where(Experiment.dataset_id==did,Experiment.kind=='baseline').order_by(Experiment.created_at.desc()).limit(1)).all()
+    last=None
+    if attempts:
+        recent=attempts[0]
+        job=db.scalar(select(Job).where(Job.target_id==recent.id).order_by(Job.created_at.desc()).limit(1))
+        last={'experiment_id':recent.id,'status':recent.status,'error':job.error if job else None,
+              'job_id':job.id if job else None,'checkpoint_available':bool((ARTIFACT_ROOT/recent.id/'baseline.joblib').is_file())}
+    return {'ready':not reasons,'reasons':reasons,'warnings':warnings,
+            'train_count':len(train),'test_count':len(test),'training_class_counts':dict(classes),
+            'last_attempt':last,
+            'note':'Preflight is not a trained model or a clinical validity assessment. Image-content leakage is verified again by the worker.'}
+
+@app.get('/api/datasets/{did}/baseline-readiness')
+def baseline_readiness(did:str):
+    with Session() as db:
+        get_dataset(db,did)
+        return _baseline_readiness(db,did)
 
 @app.get('/api/datasets/{did}/dna')
 def dataset_dna(did:str):
@@ -293,6 +347,15 @@ def create_experiment(did:str,payload:ExperimentInput):
     with Session() as db:
         get_dataset(db,did)
         if payload.kind not in EXPERIMENT_RUNNERS:raise HTTPException(422,'Unsupported experiment')
+        if payload.kind=='baseline':
+            readiness=_baseline_readiness(db,did)
+            if not readiness['ready']:
+                raise HTTPException(422,'Baseline cannot start: '+' '.join(readiness['reasons']))
+        if payload.kind in ('shortcut','counterfactual','cross_dataset'):
+            previous=db.scalars(select(Experiment).where(Experiment.dataset_id==did,
+                Experiment.kind=='baseline',Experiment.status=='completed').order_by(Experiment.created_at.desc())).all()
+            if not any((ARTIFACT_ROOT/b.id/'baseline.joblib').is_file() for b in previous):
+                raise HTTPException(422,'A completed baseline and its saved model file are required. Run baseline training first.')
         e=Experiment(dataset_id=did,kind=payload.kind,config=jd(payload.config))
         db.add(e);db.flush();job=_enqueue(db,payload.kind,e.id);db.commit()
         return {'experiment_id':e.id,'job_id':job.id}
