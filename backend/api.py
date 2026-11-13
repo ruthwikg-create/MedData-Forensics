@@ -342,6 +342,10 @@ def _cross_dataset_readiness(db,did):
             reasons.append('A specific imaging modality must be declared for both datasets before cross-dataset evaluation.')
         elif source.modality!=target.modality:
             reasons.append('Declared modality does not match the source collection.')
+        source_provenance=(source.name+' '+source.source).lower()
+        target_provenance=(target.name+' '+target.source).lower()
+        if ('ham10000' in source_provenance and 'dermamnist' in target_provenance) or ('dermamnist' in source_provenance and 'ham10000' in target_provenance):
+            reasons.append('Known dataset lineage: DermaMNIST is derived from HAM10000 and cannot serve as an independent external target for it.')
         if not any(sample.split=='test' for sample in valid_rows):
             reasons.append('The target collection has no decodable held-out test partition.')
         target_hashes={sample.sha256 for sample in valid_rows if sample.sha256}
