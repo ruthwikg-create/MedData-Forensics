@@ -304,3 +304,14 @@ test('Counterfactual Lab has independent pagination and persistent visual contro
  assert.ok(source.includes("state.view==='dna'?(state.sampleFilter||''):''"));
  vm.runInContext("state.counterPage=1;state.counterMode='brightness';state.counterStrength=40",ctx);
 });
+
+test('evidence graph offers interactive network and trace layouts with only observed links',()=>{
+ const html=vm.runInContext("state.detail={dataset:{id:'demo',name:'Test'}};state.graph={nodes:[{id:'s:1',type:'sample',label:'Sample one'},{id:'f:1',type:'finding',label:'Finding one',severity:'high'}],edges:[{source:'f:1',target:'s:1'}],audit_completed:true};renderGraph()",ctx);
+ assert.ok(html.includes('id="graphLayout"'));
+ assert.ok(html.includes('Evidence network'));
+ assert.ok(html.includes('Two-column trace'));
+ assert.ok(html.includes('id="nodeGraph"'));
+ const filtered=vm.runInContext("graphVisibleData(state.graph,{search:'',severity:'all',links:'all',layout:'network',zoom:1})",ctx);
+ assert.equal(filtered.nodes.length,2);
+ assert.equal(filtered.edges.length,1);
+});
