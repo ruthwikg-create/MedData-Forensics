@@ -41,4 +41,9 @@ All application experiments are software-only and research-only. They do not cer
 
 Open **Analysis Jobs** (bell icon). Look for the latest job status and error reason. A failed baseline can result from a missing test split, too few independent test records after identity-screening, or insufficient class representation. A successful HTTP request to queue an experiment is not equivalent to a completed experiment.
 
-Tests: `python -m pytest -q` and `node --test tests/test_frontend_routes.cjs tests/test_import_progress.cjs`. This release has been verified with a synthetic dataset in an end-to-end API workflow and browser-rendering checks using controlled local responses; independently verified clinical research results remain pending.
+Tests: `python -m pytest -q` and `node --test tests/test_frontend_routes.cjs tests/test_import_progress.cjs tests/test_notifications.cjs`. This release has been verified with a synthetic dataset in an end-to-end API workflow and browser-rendering checks using controlled local responses; independently verified clinical research results remain pending.
+
+
+## Clear analysis notifications
+
+In **Analysis Jobs** (bell icon), use **Clear** on a finished job or **Clear notifications** to hide all completed, failed and cancelled notices from the current browser. Active queued/running jobs always remain visible and can still be cancelled. Use **Show recent history** to review cleared messages and failed-job error reasons. Clearing does not remove persisted jobs, audits, model artifacts, research results, or datasets.
