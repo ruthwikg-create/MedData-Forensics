@@ -77,7 +77,7 @@ test('large import uploader transfers only bounded chunks and reports server-con
  };
  const values={};
  const ctx=vm.createContext({XMLHttpRequest:class{},storage:{get:()=>null,set:(where,key,value)=>{values[key]=value}},
-  fetch:fakeFetch,document:{querySelectorAll:()=>[]},window:{},console,setTimeout:(fn)=>fn()});
+  fetch:fakeFetch,FormData:class{},document:{querySelectorAll:()=>[]},window:{},console,setTimeout:(fn)=>fn()});
  vm.runInContext(renderSource,ctx,{filename:'app.js'});
  const result=await vm.runInContext('uploadLargeResearchDataset([file],{name:"Sample",source:"Local"},onProgress,onIndex)',
   Object.assign(ctx,{file:fakeFile,onProgress:x=>steps.push(x),onIndex:()=>{}}));
