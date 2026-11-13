@@ -170,6 +170,7 @@ async function openLargeImport(){
   '<ul id="largeImportFileQueue" class="large-import-file-queue" aria-label="Files selected for import"></ul>'+ 
   '<p id="largeImportMissing" class="fine" role="status" aria-live="polite">Add the matching ZIP images and metadata CSV before starting.</p></div>'+
   '<div class="field"><label for="largeImportName">Dataset name</label><input id="largeImportName" class="input" type="text" minlength="2" maxlength="200" value="HAM10000" required></div>'+
+  '<div class="field"><label for="largeImportModality">Imaging modality</label><select id="largeImportModality" class="select" required><option value="">Choose the actual imaging modality</option><option value="Dermatoscopic / skin lesion images" selected>Dermatoscopic / skin lesion images</option><option value="Histopathology / microscopy">Histopathology / microscopy</option><option value="Radiology / X-ray">Radiology / X-ray</option><option value="Ultrasound">Ultrasound</option><option value="MRI">MRI</option><option value="CT">CT</option><option value="Fundus / retinal images">Fundus / retinal images</option><option value="Other / unspecified">Other / unspecified (not eligible for cross-dataset comparison)</option></select><small>HAM10000 uses dermatoscopic skin-lesion images. Verify modality for any different collection.</small></div>'+
   '<div class="field-group"><div class="field"><label for="largeImportSource">Dataset source</label><input id="largeImportSource" class="input" type="text" value="HAM10000 / Harvard Dataverse"></div>'+
   '<div class="field"><label for="largeImportLicense">License and authorized use</label><input id="largeImportLicense" class="input" type="text" value="Verify original dataset non-commercial terms"></div></div>'+
   '<section class="import-tracker" id="largeImportTracker" hidden><div class="import-tracker-head"><span id="largeImportPhase">Preparing files</span><strong id="largeImportPercent">0%</strong></div>'+
@@ -196,7 +197,7 @@ async function openLargeImport(){
   missingEl.textContent=check.errors.length?'Fix file selection: '+check.errors.join('; '):
     check.ready?'All required files selected. You can start the import.':
     'Still needed: '+check.missing.join(', ')+'.';
-  startButton.disabled=!check.ready;
+  startButton.disabled=!check.ready||!$('#largeImportModality')?.value;
  };
  const previous=storage.get('localStorage','mdf-large-upload-session');
  $('#largeImportResumeSection').hidden=!previous;
@@ -229,6 +230,7 @@ async function openLargeImport(){
    renderFileQueue();
   }
  });
+ $('#largeImportModality').addEventListener('change',renderFileQueue);
  renderFileQueue();
  $('#largeImportForm').addEventListener('submit',async event=>{
   event.preventDefault();if(datasetImportInProgress)return;
@@ -245,7 +247,7 @@ async function openLargeImport(){
    errorText([...selection.errors,...selection.missing.map(name=>'Missing '+name)].join('; '));return;
   }
   const options={name:$('#largeImportName').value.trim(),source:$('#largeImportSource').value.trim(),
-   license:$('#largeImportLicense').value.trim(),modality:'Biomedical 2D image'};
+   license:$('#largeImportLicense').value.trim(),modality:$('#largeImportModality').value};
   datasetImportInProgress=true;button.disabled=true;$('#modalClose').disabled=true;filesInput.disabled=true;
   phase.textContent='Uploading files';message.textContent='Sending verified chunks to local disk…';
   try{
@@ -984,6 +986,7 @@ async function openImport(){
  const html=`<p class="fine" style="margin-bottom:16px">Upload an authorized dataset to this computer. NPZ files up to 256 MiB support MedMNIST train/val/test arrays; ZIP files up to 150 MiB require a root-level samples.csv with sample_id, image_path, label and split columns. Larger ZIPs and multipart datasets use the separate disk-backed uploader. No cloud transfer.</p><div class="import-large-entry">${btn(icon('upload')+' Import large ZIP or HAM10000','large-import','btn-teal')}<p class="fine">For HAM10000, choose both image ZIP parts and HAM10000_metadata.csv. Single-part archives cannot be indexed with labels.</p></div>
  <form id="importForm"><div id="importFields"><div class="field"><label for="fileUpload">Dataset file (.npz or .zip)</label><input class="input" id="fileUpload" type="file" accept=".npz,.zip" required></div>
  <div class="field"><label for="datasetName">Dataset name</label><input class="input" id="datasetName" required minlength="2" maxlength="200" placeholder="e.g. DermaMNIST"></div>
+ <div class="field"><label for="datasetModality">Imaging modality</label><select class="select" id="datasetModality" required><option value="">Choose the actual imaging modality</option><option value="Dermatoscopic / skin lesion images">Dermatoscopic / skin lesion images</option><option value="Histopathology / microscopy">Histopathology / microscopy</option><option value="Radiology / X-ray">Radiology / X-ray</option><option value="Ultrasound">Ultrasound</option><option value="MRI">MRI</option><option value="CT">CT</option><option value="Fundus / retinal images">Fundus / retinal images</option><option value="Other / unspecified">Other / unspecified (not eligible for cross-dataset comparison)</option></select><small>Choose the real acquisition modality, not just “2D image”. Cross-Dataset Lab blocks unspecified modalities.</small></div>
  <div class="field-group"><div class="field"><label for="datasetSource">Source / provenance</label><input class="input" id="datasetSource" value="MedMNIST / Zenodo"></div><div class="field"><label for="datasetLicense">License / authorization</label><input class="input" id="datasetLicense" value="Verify dataset provider terms"></div></div>
  <div class="field"><label for="maxImages">Maximum NPZ images per split</label><input class="input" id="maxImages" type="number" min="10" max="10000" value="500"><small>The import manifest records whether sampling occurred. On an Intel Iris Xe laptop, begin with 500 images per split.</small></div></div>
  <section class="import-tracker" id="importTracker" hidden aria-label="Import progress">
@@ -1011,9 +1014,9 @@ async function openImport(){
   const limitMiB=uploadLimitMiB(f.name);
   if(f.size>limitMiB*1024*1024){status.hidden=false;phase.textContent='Use the large dataset importer';pct.textContent='';stamp(`${f.name} is ${(f.size/(1024*1024)).toFixed(1)} MiB. ZIP files over 150 MiB need the large dataset uploader and their matching metadata CSV. Use the button above to select all dataset parts together. NPZ files remain limited to 256 MiB.`);status.classList.add('import-error');return;}
   const b=new FormData(); // Inputs use IDs, so populate the upload payload explicitly.
-  b.append('file',f);b.append('name',$('#datasetName').value);b.append('source',$('#datasetSource').value);b.append('license',$('#datasetLicense').value);b.append('max_per_split',$('#maxImages').value);
+  b.append('file',f);b.append('name',$('#datasetName').value);b.append('source',$('#datasetSource').value);b.append('license',$('#datasetLicense').value);b.append('max_per_split',$('#maxImages').value);b.append('modality',$('#datasetModality').value);
   datasetImportInProgress=true;status.hidden=false;status.classList.remove('import-error','import-complete');
-  $('#importFields').querySelectorAll('input').forEach(el=>el.disabled=true);button.disabled=true;$('#modalClose').disabled=true;
+  $('#importFields').querySelectorAll('input,select').forEach(el=>el.disabled=true);button.disabled=true;$('#modalClose').disabled=true;
   buttonText.textContent='Import in progress';phase.textContent='Uploading dataset';pct.textContent='0%';bar.hidden=false;$('#importWorking').hidden=true;bar.value=0;stamp(`Uploading ${f.name} (${(f.size/(1024*1024)).toFixed(1)} MB) to the local server…`);mark('upload');
   const onProgress=(n)=>{bar.value=n;pct.textContent=n+'%';};
   const onPhase=(stage)=>{if(stage==='indexing'){
