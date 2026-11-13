@@ -348,7 +348,80 @@ async function openFinding(id){try{const out=await api('/api/findings/'+id);cons
 async function openSample(id){try{const d=await api('/api/samples/'+id),s=d.sample;openModal('Image record · '+s.sample_id,`<div class="comparison"><div class="image-panel"><img src="${esc(s.image_url)}" alt="Selected research image" style="height:300px"><p>${esc(s.sample_id)}</p></div><div><dl>${[['Label',s.label],['Split',s.split],['Group ID',s.group_id||'Not recorded'],['Group meaning',s.group_type||'Not documented'],['Source site',s.site||'Unknown'],['Dimensions',s.width+'×'+s.height],['SHA256',short(s.sha256)]].map(([k,v])=>`<div class="kv" style="grid-template-columns:100px 1fr"><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl></div></div><div class="rule"></div><h3>Linked forensic findings</h3>${(d.findings||[]).length?`<div class="findings-list" style="margin-top:13px">${d.findings.slice(0,8).map(findingRow).join('')}</div>`:'<p class="fine" style="margin-top:12px">No related audit evidence recorded.</p>'}`)}catch(e){toast(e.message,true)}}
 async function startAudit(){if(!state.did)return toast('Select a dataset first',true);try{const v=await api('/api/datasets/'+state.did+'/audit',{method:'POST'});toast('Forensic analysis queued. Watch Analysis Jobs.');openJobs();}catch(e){toast(e.message,true)}}
 async function launchExperiment(kind,config={}){if(!state.did)return toast('Select a dataset first',true);if(['shortcut','counterfactual','cross_dataset'].includes(kind)&&!bestExp('baseline')){toast('Train the CPU baseline first; open Model Failure Explorer.',true);return}try{const v=await api('/api/datasets/'+state.did+'/experiments',{method:'POST',body:JSON.stringify({kind,config})});toast(title(kind)+' experiment queued.');openJobs()}catch(e){toast(e.message,true)}}
-async function openJobs(){try{const rows=await api('/api/jobs');let html=`<p class="fine" style="margin-bottom:15px">Background CPU tasks continue while you explore the workbench. Refresh to check their status.</p><div class="data-list">${rows.length?rows.map(j=>`<div class="data-row"><div style="flex:1"><div class="row-label">${esc(title(j.kind))} ${pill(j.status,j.status==='completed'?'green':j.status==='failed'?'red':j.status==='running'?'amber':'')}</div><div class="row-desc">${esc(j.message)}</div>${j.status==='running'?`<div class="meter" style="margin-top:9px"><div class="meter-fill" style="width:${j.progress}%"></div></div>`:''}${j.error?`<p class="fine" style="color:var(--red);margin-top:7px">${esc(j.error)}</p>`:''}</div>${['queued','running'].includes(j.status)?`<button class="btn btn-small" data-cancel-job="${esc(j.id)}">Cancel</button>`:''}</div>`).join(''):empty('No background jobs','Run an audit or experiment to generate a task.')}</div><div class="actions">${btn(icon('rotate')+' Refresh jobs','jobs','btn-primary')}${btn('Refresh workspace','refresh','')}</div>`;openModal('Analysis jobs',html)}catch(e){toast(e.message,true)}}
+const JOB_NOTIFICATION_STORAGE_KEY='mdf-cleared-job-notifications-v1';
+const TERMINAL_JOB_STATES=new Set(['completed','failed','cancelled']);
+function isFinishedJob(job){return TERMINAL_JOB_STATES.has(job?.status)}
+function clearedJobIds(){
+ try{
+  const saved=JSON.parse(storage.get('localStorage',JOB_NOTIFICATION_STORAGE_KEY)||'[]');
+  return new Set(Array.isArray(saved)?saved.filter(id=>typeof id==='string'&&id.length<=100).slice(-500):[]);
+ }catch{return new Set()}
+}
+function saveClearedJobIds(ids){storage.set('localStorage',JOB_NOTIFICATION_STORAGE_KEY,JSON.stringify([...ids].slice(-500)))}
+function visibleJobNotifications(rows,includeCleared=false){
+ const cleared=clearedJobIds();
+ return rows.filter(job=>includeCleared||!isFinishedJob(job)||!cleared.has(job.id));
+}
+function updateJobIndicator(rows){
+ const badge=$('#jobIndicator');if(!badge)return;
+ const cleared=clearedJobIds();
+ badge.hidden=!rows.some(job=>['queued','running'].includes(job.status)||(isFinishedJob(job)&&!cleared.has(job.id)));
+}
+function renderJobInbox(rows,showHistory=false){
+ const cleared=clearedJobIds();
+ const items=visibleJobNotifications(rows,showHistory);
+ const actionable=rows.filter(job=>isFinishedJob(job)&&!cleared.has(job.id));
+ const archived=rows.filter(job=>isFinishedJob(job)&&cleared.has(job.id)).length;
+ const heading=showHistory?'Recent job history':'Notifications & analysis jobs';
+ const intro=showHistory?'The latest 35 job records are shown, including cleared notifications.':
+   'Active jobs stay visible; finished notifications can be cleared without deleting results.';
+ const header='<div class="job-inbox-header"><div><h3>'+heading+'</h3><p class="fine">'+intro+'</p></div>'+
+   '<button class="btn btn-small" type="button" data-action="clear-job-notifications" '+(actionable.length?'':'disabled')+'>Clear notifications ('+actionable.length+')</button></div>';
+ const info='<p class="job-inbox-note">'+(archived?archived+' cleared notification(s) in recent history. ':'')+
+   'Clearing hides messages in this browser only. Audit records, errors and experiment history remain saved.</p>';
+ const contents=items.length?items.map(job=>{
+  const terminal=isFinishedJob(job),done=terminal&&cleared.has(job.id);
+  const action=terminal?(done?'<span class="job-cleared-label">Cleared</span>':
+   '<button class="btn btn-small job-dismiss" type="button" data-dismiss-job="'+esc(job.id)+'" aria-label="Clear '+esc(title(job.kind))+' notification">Clear</button>'):
+   '<button class="btn btn-small" type="button" data-cancel-job="'+esc(job.id)+'">Cancel</button>';
+  return '<div class="data-row job-inbox-row'+(done?' is-cleared':'')+'"><div class="job-inbox-details"><div class="row-label">'+
+   esc(title(job.kind))+' '+pill(job.status,job.status==='completed'?'green':job.status==='failed'?'red':job.status==='running'?'amber':'')+
+   '</div><div class="row-desc">'+esc(job.message||'')+'</div>'+
+   (job.status==='running'?'<div class="meter" style="margin-top:9px"><div class="meter-fill" style="width:'+Math.max(0,Math.min(100,Number(job.progress)||0))+'%"></div></div>':'')+
+   (job.error?'<p class="fine job-error">'+esc(job.error)+'</p>':'')+'</div><div class="job-inbox-actions">'+action+'</div></div>';
+ }).join(''):empty('No notifications to show','New or active analysis jobs will appear here. Cleared job records remain available in recent history.');
+ const footer='<div class="actions job-inbox-footer">'+
+    btn(icon('rotate')+' Refresh','jobs','btn-small')+
+    (showHistory?btn('Show notifications','jobs','btn-small'):btn('Show recent history','jobs-history','btn-small'))+
+    btn('Refresh workspace','refresh','btn-small')+'</div>';
+ return header+info+'<div class="data-list job-inbox-list" aria-live="polite">'+contents+'</div>'+footer;
+}
+async function clearJobNotifications(){
+ const rows=await api('/api/jobs');
+ const cleared=clearedJobIds();
+ const toClear=rows.filter(job=>isFinishedJob(job)&&!cleared.has(job.id));
+ for(const job of toClear)cleared.add(job.id);
+ saveClearedJobIds(cleared);
+ updateJobIndicator(rows);
+ await openJobs();
+ toast(toClear.length?toClear.length+' notification(s) cleared. Job history preserved.':'No finished notifications to clear.');
+}
+async function clearJobNotification(id){
+ const job=await api('/api/jobs/'+encodeURIComponent(id));
+ if(!isFinishedJob(job)){toast('Active jobs cannot be cleared; they remain visible until finished.',true);return;}
+ const cleared=clearedJobIds();
+ cleared.add(job.id);
+ saveClearedJobIds(cleared);
+ await openJobs();
+ toast('Notification cleared. Job history preserved.');
+}
+async function openJobs(showHistory=false){
+ try{
+  const rows=await api('/api/jobs');
+  updateJobIndicator(rows);
+  openModal('Analysis jobs',renderJobInbox(rows,showHistory));
+ }catch(error){toast(error.message,true);}
+}
 async function openImport(){
  const html=`<p class="fine" style="margin-bottom:20px">Upload an authorized dataset to this computer. NPZ files up to 256 MiB support MedMNIST train/val/test arrays; ZIP files up to 150 MiB require a root-level samples.csv with sample_id, image_path, label and split columns. No cloud transfer.</p>
  <form id="importForm"><div id="importFields"><div class="field"><label for="fileUpload">Dataset file (.npz or .zip)</label><input class="input" id="fileUpload" type="file" accept=".npz,.zip" required></div>
@@ -412,7 +485,7 @@ async function openImport(){
 async function openDemo(){openModal('Generate synthetic research sandbox',`<p class="fine" style="margin-bottom:18px">Creates geometric phantoms, not medical images. Known label flips, exact copies, near copies and group overlaps are injected so detectors can be sanity-tested.</p><div class="field-group"><div class="field"><label for="demoCount">Number of base patterns</label><input class="input" id="demoCount" type="number" min="40" max="1200" value="128"></div><div class="field"><label for="demoSeed">Generation seed</label><input class="input" id="demoSeed" type="number" min="1" max="999999" value="42"></div></div><div class="actions">${btn(icon('plus')+' Create training sandbox','create-demo','btn-primary')}</div>`)}
 async function createDemo(){const button=document.querySelector('[data-action="create-demo"]');if(button)button.disabled=true;const returnTo=state.view;try{const out=await api('/api/datasets/demo',{method:'POST',body:JSON.stringify({count:Number($('#demoCount').value),seed:Number($('#demoSeed').value)})});closeModal();state.did=out.dataset_id;storage.set('localStorage','mdf-dataset',out.dataset_id);await refresh(true);navigate(returnTo==='overview'?'dna':returnTo);toast('Created an entirely synthetic, local research sandbox.')}catch(e){toast(e.message,true);if(button)button.disabled=false}}
 async function showExperiment(id){try{const e=await api('/api/experiments/'+id);openModal('Experiment manifest · '+title(e.kind),`<p class="fine">${esc(e.status)} · Research record ${esc(e.id)}</p><div class="scope-label" style="margin-top:18px">EXPERIMENT CONFIGURATION</div><div class="mono-box">${esc(JSON.stringify(e.config,null,2))}</div><div class="scope-label" style="margin-top:18px">RECORDED RESULT</div><div class="mono-box">${esc(JSON.stringify(e.result,null,2))}</div>`)}catch(e){toast(e.message,true)}}
-async function handleAction(action){switch(action){case 'import':return openImport();case 'demo':return openDemo();case 'create-demo':return createDemo();case 'run-audit':return startAudit();case 'jobs':return openJobs();case 'refresh':return refresh(true);case 'rankings':{state.rankingBudget=Number($('#rankingBudget')?.value||4);const target=$('#rankingResult');if(target)target.innerHTML='<div class="rank-pending" role="status">Comparing real candidate order…</div>';state.rankings=await api('/api/datasets/'+state.did+'/rankings?budget='+state.rankingBudget);if(target)target.innerHTML=renderRankings();return;}case 'filter-findings':state.activeFilters={kind:$('#findingKind')?.value||'',status:$('#findingStatus')?.value||''};state.findingPage=1;return render();case 'filter-samples':state.sampleFilter=`&split=${encodeURIComponent($('#dnaSplit').value)}&label=${encodeURIComponent($('#dnaLabel').value)}&search=${encodeURIComponent($('#dnaSearch').value)}`;state.samplePage=1;return render();case 'go-audit':return navigate('audit');case 'go-privacy':return navigate('privacy');case 'baseline-launch':return launchExperiment('baseline',{seed:42});case 'shortcut':return launchExperiment('shortcut',{seed:42});case 'impact':return launchExperiment('impact',{seed:42});case 'counterfactual-launch':{const sid=$('#counterSample')?.value;if(!sid)return toast('Select a research image first',true);return launchExperiment('counterfactual',{sample_id:sid,strength:Number($('#counterfactualAmount')?.value||40)/100})}case 'cross-launch':{const did=$('#crossTarget')?.value;if(!did)return toast('Select a target dataset first',true);return launchExperiment('cross_dataset',{target_dataset_id:did})}case 'scenario-launch':return launchExperiment('scenario',{seed:Number($('#scenarioSeed').value),label_flip_rate:Number($('#scenarioRate').value)});case 'verify-integrity':{if(!state.did)return toast('Select a dataset first',true);try{const info=await api('/api/datasets/'+state.did+'/verify');const target=$('#integrityResults');if(target)target.innerHTML=`<div class="notice ${info.passed?'':'warning'}" style="margin-top:12px"><strong>${info.passed?'Integrity check passed':'Integrity check found issues'}</strong><p>Files checked: ${number(info.checked_files)} · Problems: ${number(info.problem_count)}</p><p class="fine">${esc((info.problems||[]).slice(0,5).map(p=>p.kind+': '+(p.sample_id||'manifest')).join('; ') || 'No recorded mismatches.')}</p></div>`;}catch(e){toast(e.message,true)}return;}case 'download-json':window.location.href='/api/datasets/'+state.did+'/report?format=json';return;case 'auth-prompt':openModal('Local access token',`<div class="field"><label for="authToken">MDF_ACCESS_TOKEN</label><input class="input" type="password" id="authToken" placeholder="Enter configured token"></div>${btn('Authenticate','save-token','btn-primary')}`);return;case 'save-token':storage.set('sessionStorage','mdf-token',$('#authToken').value);await api('/api/session',{method:'POST'});toast('Authenticated for this local session');return;default:toast('Unknown control: '+action,true)}}
+async function handleAction(action){switch(action){case 'import':return openImport();case 'demo':return openDemo();case 'create-demo':return createDemo();case 'run-audit':return startAudit();case 'jobs':return openJobs();case 'jobs-history':return openJobs(true);case 'clear-job-notifications':return clearJobNotifications();case 'refresh':return refresh(true);case 'rankings':{state.rankingBudget=Number($('#rankingBudget')?.value||4);const target=$('#rankingResult');if(target)target.innerHTML='<div class="rank-pending" role="status">Comparing real candidate order…</div>';state.rankings=await api('/api/datasets/'+state.did+'/rankings?budget='+state.rankingBudget);if(target)target.innerHTML=renderRankings();return;}case 'filter-findings':state.activeFilters={kind:$('#findingKind')?.value||'',status:$('#findingStatus')?.value||''};state.findingPage=1;return render();case 'filter-samples':state.sampleFilter=`&split=${encodeURIComponent($('#dnaSplit').value)}&label=${encodeURIComponent($('#dnaLabel').value)}&search=${encodeURIComponent($('#dnaSearch').value)}`;state.samplePage=1;return render();case 'go-audit':return navigate('audit');case 'go-privacy':return navigate('privacy');case 'baseline-launch':return launchExperiment('baseline',{seed:42});case 'shortcut':return launchExperiment('shortcut',{seed:42});case 'impact':return launchExperiment('impact',{seed:42});case 'counterfactual-launch':{const sid=$('#counterSample')?.value;if(!sid)return toast('Select a research image first',true);return launchExperiment('counterfactual',{sample_id:sid,strength:Number($('#counterfactualAmount')?.value||40)/100})}case 'cross-launch':{const did=$('#crossTarget')?.value;if(!did)return toast('Select a target dataset first',true);return launchExperiment('cross_dataset',{target_dataset_id:did})}case 'scenario-launch':return launchExperiment('scenario',{seed:Number($('#scenarioSeed').value),label_flip_rate:Number($('#scenarioRate').value)});case 'verify-integrity':{if(!state.did)return toast('Select a dataset first',true);try{const info=await api('/api/datasets/'+state.did+'/verify');const target=$('#integrityResults');if(target)target.innerHTML=`<div class="notice ${info.passed?'':'warning'}" style="margin-top:12px"><strong>${info.passed?'Integrity check passed':'Integrity check found issues'}</strong><p>Files checked: ${number(info.checked_files)} · Problems: ${number(info.problem_count)}</p><p class="fine">${esc((info.problems||[]).slice(0,5).map(p=>p.kind+': '+(p.sample_id||'manifest')).join('; ') || 'No recorded mismatches.')}</p></div>`;}catch(e){toast(e.message,true)}return;}case 'download-json':window.location.href='/api/datasets/'+state.did+'/report?format=json';return;case 'auth-prompt':openModal('Local access token',`<div class="field"><label for="authToken">MDF_ACCESS_TOKEN</label><input class="input" type="password" id="authToken" placeholder="Enter configured token"></div>${btn('Authenticate','save-token','btn-primary')}`);return;case 'save-token':storage.set('sessionStorage','mdf-token',$('#authToken').value);await api('/api/session',{method:'POST'});toast('Authenticated for this local session');return;default:toast('Unknown control: '+action,true)}}
 document.addEventListener('click',async e=>{
  const nav=e.target.closest('[data-view]');if(nav){navigate(nav.dataset.view);return}
  const act=e.target.closest('[data-action]');if(act){act.disabled=true;try{await handleAction(act.dataset.action)}catch(err){toast(err.message,true)}finally{if(act.isConnected)act.disabled=false}return}
@@ -422,6 +495,7 @@ document.addEventListener('click',async e=>{
  const rev=e.target.closest('[data-review]');if(rev){const [id,decision]=rev.dataset.review.split(':');const notes=$('#reviewNotes')?.value||'';if(decision==='confirmed'&&notes.trim().length<8){toast('Please explain the evidence for confirming a concern (at least 8 characters).',true);return}try{await api('/api/findings/'+id+'/review',{method:'POST',body:JSON.stringify({decision,notes,reviewer:$('#reviewer')?.value||'Local researcher',duration_seconds:Number($('#reviewDuration')?.value)||null})});closeModal();toast('Decision preserved in review history.');await refresh(true)}catch(err){toast(err.message,true)}return}
  const exp=e.target.closest('[data-experiment]');if(exp){launchExperiment(exp.dataset.experiment,{seed:42});return}
  const ed=e.target.closest('[data-experiment-detail]');if(ed){showExperiment(ed.dataset.experimentDetail);return}
+ const dismiss=e.target.closest('[data-dismiss-job]');if(dismiss){dismiss.disabled=true;try{await clearJobNotification(dismiss.dataset.dismissJob)}catch(error){toast(error.message,true)}finally{if(dismiss.isConnected)dismiss.disabled=false}return}
  const cancel=e.target.closest('[data-cancel-job]');if(cancel){try{await api('/api/jobs/'+cancel.dataset.cancelJob+'/cancel',{method:'POST'});toast('Cancellation requested');openJobs()}catch(err){toast(err.message,true)}return}
  const page=e.target.closest('[data-page]');if(page){const [kind,dir]=page.dataset.page.split(':');if(kind==='sample'){state.samplePage=Math.max(1,state.samplePage+(dir==='next'?1:-1))}else{state.findingPage=Math.max(1,(state.findingPage||1)+(dir==='next'?1:-1))}render();return}
 });
@@ -436,7 +510,7 @@ $('#datasetSelect').addEventListener('change',e=>changeDataset(e.target.value));
 $('#menuToggle').addEventListener('click',()=>{$('#sidebar').classList.toggle('open');const opened=$('#sidebar').classList.contains('open');$('#mobileOverlay').hidden=!opened;$('#menuToggle').setAttribute('aria-expanded',String(opened))});
 $('#mobileOverlay').addEventListener('click',()=>{$('#sidebar').classList.remove('open');$('#mobileOverlay').hidden=true;$('#menuToggle').setAttribute('aria-expanded','false')});
 window.addEventListener('hashchange',()=>{const view=location.hash.replace('#/','');if(view&&view!==state.view){state.view=RENDER[view]?view:'overview';render()}});
-async function pollJobs(){try{const rows=await api('/api/jobs');const active=rows.filter(j=>j.status==='queued'||j.status==='running');$('#jobIndicator').hidden=!active.length;
+async function pollJobs(){try{const rows=await api('/api/jobs');updateJobIndicator(rows);
  const terminal=rows.filter(j=>['completed','failed','cancelled'].includes(j.status)).map(j=>j.id+':'+j.status).join('|');
  if(pollJobs.last!==undefined&&pollJobs.last!==terminal){await loadCore();await render()}
  pollJobs.last=terminal;
