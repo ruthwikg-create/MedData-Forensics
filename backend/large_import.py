@@ -142,6 +142,18 @@ def append_chunk(session_id, file_index, offset, content):
         return public_status(state)
 
 
+
+def discard_session(session_id):
+    """Release staged gigabyte archives; never interrupt an active index job."""
+    with _MUTEX:
+        state = _state(session_id)
+        if state['phase'] in ('queued', 'processing'):
+            raise ValueError('Cannot discard archives while indexing is queued or active')
+        shutil.rmtree(_directory(session_id))
+        return {'deleted': True, 'released_bytes': state['received_bytes']}
+
+
+
 def begin_processing(session_id):
     with _MUTEX:
         state = _state(session_id)
