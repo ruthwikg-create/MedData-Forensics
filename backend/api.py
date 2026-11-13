@@ -55,6 +55,11 @@ class ExperimentInput(BaseModel):
     kind:Literal['baseline','shortcut','counterfactual','cross_dataset','impact','scenario']
     config:dict=Field(default_factory=dict)
 
+class ModalityConfirmation(BaseModel):
+    modality:str=Field(min_length=3,max_length=120)
+    source_documentation:str=Field(min_length=8,max_length=1000)
+    confirmed:bool=False
+
 
 def stamp(dt):return dt.astimezone(timezone.utc).isoformat().replace('+00:00','Z') if dt and dt.tzinfo else (dt.isoformat()+'Z' if dt else None)
 
@@ -273,6 +278,36 @@ def _baseline_readiness(db,did):
             'train_count':len(train),'test_count':len(test),'training_class_counts':dict(classes),
             'last_attempt':last,
             'note':'Preflight is not a trained model or a clinical validity assessment. Image-content leakage is verified again by the worker.'}
+
+@app.patch('/api/datasets/{did}/modality')
+def confirm_dataset_modality(did:str,payload:ModalityConfirmation):
+    allowed={
+        'Dermatoscopic / skin lesion images','Histopathology / microscopy',
+        'Radiology / X-ray','Ultrasound','MRI','CT',
+        'Fundus / retinal images','Other / unspecified'
+    }
+    if payload.confirmed is not True:
+        raise HTTPException(422,'Confirm that the modality was checked against the original dataset documentation.')
+    if payload.modality not in allowed:
+        raise HTTPException(422,'Choose one of the supported modality declarations.')
+    note=payload.source_documentation.strip()
+    if len(note)<8:
+        raise HTTPException(422,'Provide a dataset documentation title or source reference (at least 8 characters).')
+    with Session() as db:
+        d=get_dataset(db,did)
+        metadata=jl(d.meta)
+        history=metadata.get('modality_attestations',[])
+        if not isinstance(history,list):history=[]
+        attestation={'previous_modality':d.modality,'confirmed_modality':payload.modality,
+                     'source_documentation':note,'confirmed_utc':now().isoformat()}
+        history.append(attestation)
+        metadata['modality_attestations']=history
+        d.meta=jd(metadata)
+        d.modality=payload.modality
+        db.commit()
+        count=db.scalar(select(func.count(Sample.id)).where(Sample.dataset_id==did))
+        return {'dataset':dataset_out(d,count),'attestation':attestation,
+                'note':'The declared modality was updated based on the researcher-provided documentation reference. Image content and labels were not independently verified.'}
 
 @app.get('/api/datasets/{did}/baseline-readiness')
 def baseline_readiness(did:str):
