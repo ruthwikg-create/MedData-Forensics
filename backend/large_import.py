@@ -324,18 +324,19 @@ def _index_zip_collection(session_id, state):
                         width, height = image_info(out)
                     except ValueError:
                         width = height = None  # Retain as an invalid image for integrity audit.
-                    lesion = (row.get('lesion_id') or '').strip() if ham else (
-                        row.get('lesion_id') or row.get('group_id') or row.get('patient_id') or '').strip()
-                    group_type = ('lesion' if ham or row.get('lesion_id') else
+                    group_id = (row.get('lesion_id') or '').strip() if ham else (
+                        row.get('patient_id') or row.get('lesion_id') or row.get('group_id') or '').strip()
+                    group_type = ('lesion' if ham else
                                   'patient' if row.get('patient_id') else
-                                  'unspecified' if lesion else None)
+                                  'lesion' if row.get('lesion_id') else
+                                  'unspecified' if group_id else None)
                     sample = Sample(
                         dataset_id=d.id,
                         sample_id=(row['image_id'] if ham else row['sample_id'])[:200],
                         relpath=f'{d.id}/images/{out.name}',
                         label=(row['dx'] if ham else row['label'])[:120],
-                        split=(_lesion_split(lesion) if ham else row['split']),
-                        group_id=lesion or None, group_type=group_type,
+                        split=(_lesion_split(group_id) if ham else row['split']),
+                        group_id=group_id or None, group_type=group_type,
                         site=row.get('site_id') or None,
                         source_id=row.get('image_id') if ham else row.get('source_record_id'),
                         sha256=sha_file(out), width=width, height=height,
