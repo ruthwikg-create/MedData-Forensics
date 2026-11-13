@@ -46,6 +46,12 @@ The Model Failure Explorer confusion matrix uses native focusable buttons for ea
 
 Interaction states: editable search field, select changes, zoom disabled endpoints, focus-visible outlines, explicit zero-match empty state, persistent textual evidence counts, reduced-motion support. Touch controls have a minimum 44px vertical target. Dynamic graph filters update without a network request or discarding the current dataset. Switching datasets resets the graph and failure selections, preventing stale evidence from being shown.
 
+## Dataset DNA and accessible routing
+
+Split and recorded-label distributions are native focusable buttons, with visible values, proportional bars, and aria-pressed states. Clicking a histogram row applies a real server-side sample-filter query; it never rewrites dataset labels or generates new statistics. Source and dimensions charts stay descriptive because those filters are not yet supported by the samples API.
+
+The filter form preserves split, label and identifier search across rerender and pagination. The Clear filters action restores an unfiltered view. Switching datasets clears all prior dataset-specific selections. After a navigation action finishes rendering, keyboard focus moves to the page's main content, so screen-reader users hear the newly opened research section.
+
 ## Final acceptance checklist
 
 - [x] Working active navigation and dataset selector
