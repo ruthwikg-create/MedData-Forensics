@@ -270,3 +270,24 @@ test('real baseline confusion cells drill into actual predicted test records',()
  assert.ok(defaultGallery.includes('data-sample="db2"'));
  assert.ok(!defaultGallery.includes('data-sample="db1"'));
 });
+
+test('Dataset DNA histograms are actual sample filters and persist across rerenders',()=>{
+ const html=vm.runInContext("state.detail={dataset:{id:'demo',name:'Synthetic record set',source:'Generated',modality:'Synthetic',license:'CC0',manifest_hash:'abc',synthetic:true,sample_count:48}};state.dna={splits:{train:30,val:9,test:9},labels:{a:24,b:24},sites:{none:48},image_shapes:{'28x28':48},lineage:[],group_coverage:{with_group_id:20}};state.samples={items:[],count:0};state.samplePage=1;state.dnaFilters={split:'',label:'',search:''};renderDNA()",ctx);
+ assert.ok(html.includes('data-dna-chart="split"'));
+ assert.ok(html.includes('data-dna-value="train"'));
+ assert.ok(html.includes('data-dna-chart="label"'));
+ assert.ok(html.includes('aria-pressed="false"'));
+ vm.runInContext("setDnaChartFilter('split','train');setDnaChartFilter('label','b')",ctx);
+ const query=vm.runInContext("state.sampleFilter",ctx);
+ assert.ok(query.includes('split=train'));
+ assert.ok(query.includes('label=b'));
+ const active=vm.runInContext("renderDNA()",ctx);
+ assert.ok(active.includes('data-dna-value="train" aria-pressed="true"'));
+ assert.ok(active.includes('data-dna-value="b" aria-pressed="true"'));
+ assert.ok(active.includes('id="dnaSearch"'));
+ assert.ok(active.includes('data-action="clear-sample-filters"'));
+ vm.runInContext("state.dnaFilters={split:'',label:'',search:''};state.sampleFilter=''",ctx);
+});
+test('navigation transfers focus to main content after route changes',()=>{
+ assert.ok(source.includes("await render();$('#main')?.focus({preventScroll:true})"));
+});
