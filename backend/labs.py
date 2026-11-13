@@ -293,6 +293,10 @@ def run_cross_dataset(exp_id,progress=None):
         target_id=cfg.get('target_dataset_id')
         if not target_id or target_id==d.id:raise ValueError('Choose a separate target dataset')
         target,external=_load(db,target_id);base,model=_latest_model(db,d.id)
+        source_provenance=(d.name+' '+d.source).lower()
+        target_provenance=(target.name+' '+target.source).lower()
+        if ('ham10000' in source_provenance and 'dermamnist' in target_provenance) or ('dermamnist' in source_provenance and 'ham10000' in target_provenance):
+            raise ValueError('DermaMNIST is derived from HAM10000 and cannot be treated as an independent external dataset')
         if cfg.get('independence_confirmed') is not True:
             raise ValueError('Researcher must confirm that the target is independently collected and is not a subset, resize, augmentation or re-export of the source dataset')
         source_classes=set(str(x) for x in model.classes_.tolist())
