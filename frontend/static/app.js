@@ -580,6 +580,8 @@ function renderCross(){
    '<option value="">Choose a compatible collection</option>'+
    eligible.map(target=>'<option value="'+esc(target.id)+'">'+esc(target.name)+' ('+number(target.sample_count)+' images)'+(target.mapping_eligible?' · mapping required':'')+'</option>').join('')+
   '</select><small>Only collections passing modality, test-split and duplicate preflight are selectable.</small></div>':'';
+ const independenceCheck=eligible.length?
+  '<label class="check-row cross-independence-check"><input type="checkbox" id="crossIndependenceConfirm"> I verified from the source documentation that the target is independently collected, not a subset, resize, augmentation or re-export of the source dataset.</label>':'';
  const mappingPanels=eligible.filter(target=>target.mapping_eligible).map(target=>
   '<div class="cross-label-mapping" data-target-map="'+esc(target.id)+'" hidden>'+
    '<h4>Explicit one-to-one class mapping</h4>'+
@@ -603,8 +605,10 @@ function renderCross(){
     '<p>Other datasets are loaded, but none passes the technical compatibility checks. The reasons are listed below. Do not bypass modality, duplicate or test-split checks.</p>'+
     '<div class="actions">'+btn('Import another dataset','import','btn-primary')+
     btn('Create two synthetic collections to test this lab','cross-demo-pair','btn')+'</div></div>':'')+
+   independenceCheck+
    mappingPanels+
    (candidateRows?'<div class="lab-target-list" aria-label="Dataset compatibility results">'+candidateRows+'</div>':'')+
+   '<p class="fine">Hash checks cannot prove patient independence or detect every resized/reprocessed duplicate. Never use a source dataset and a resized subset derived from it as independent external validation. The independence declaration is stored with the experiment.</p>'+
    '<p class="fine">A user-supplied class mapping is recorded with the experiment. It does not prove clinical equivalence, matching populations or comparable acquisition protocols.</p>'+
    (state.detail.dataset.synthetic?notice('The selected source is synthetic geometry. Use this pair to test the software workflow only; it is not biomedical evidence.','warn'):'')+
    '</section>';
@@ -1066,6 +1070,8 @@ async function handleAction(action){switch(action){case 'import':return openImpo
  const targetId=$('#crossTarget')?.value;if(!targetId)return toast('Select a target dataset first',true);
  const target=state.crossReadiness?.targets?.find(item=>item.id===targetId);
  const config={target_dataset_id:targetId};
+ if(!$('#crossIndependenceConfirm')?.checked)return toast('Confirm that the target is independently collected and is not derived from the source dataset.',true);
+ config.independence_confirmed=true;
  if(target?.mapping_eligible){
   const panel=[...document.querySelectorAll('[data-target-map]')].find(item=>item.dataset.targetMap===targetId);
   if(!panel)return toast('The label-mapping panel is missing. Reload this workspace and try again.',true);
