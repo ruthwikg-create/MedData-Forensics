@@ -59,7 +59,7 @@ test('large import uploader transfers only bounded chunks and reports server-con
  const response=(obj)=>({ok:true,status:200,headers:{get:()=>'application/json'},json:async()=>obj});
  const fakeFetch=async(url,options={})=>{
   if(url==='/api/datasets/import-large'&&options.method==='POST')
-   return response({id:'a'.repeat(32),chunk_bytes:8*1024*1024,files:[{name:'large.zip',size:total,received:0}]});
+   return response({id:'a'.repeat(32),phase:'uploading',chunk_bytes:8*1024*1024,files:[{name:'large.zip',size:total,received:0}]});
   if(url.includes('/files/0?offset=')&&options.method==='PUT'){
    const offset=Number(url.split('offset=')[1]);offsets.push(offset);
    assert.equal(offset,accepted);
