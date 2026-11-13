@@ -65,3 +65,28 @@ In **Analysis Jobs** (bell icon), use **Clear** on a finished job or **Clear not
 Model Baseline and audit label-quality analysis use scikit-learn logistic regression with a multinomial-capable `lbfgs` solver, so authorized research datasets with **three or more classes** (for example PathMNIST) no longer fail solely because the old `liblinear` solver rejected multiclass fitting. Training still requires sufficient observations in multiple classes and a leakage-screened held-out test partition. Other dataset or environment failures remain possible and are reported in **Analysis Jobs**. Old failed jobs are not rewritten; run a **new** baseline after updating.
 
 The Evidence Graph is **detector-evidence-only**. It never draws fabricated links to make the display look full. After a completed audit with only dataset-wide findings or no linked findings, the graph shows **real isolated image-record nodes** plus any global finding nodes, with an explicit no-links explanation. When findings have image identifiers, the network draws and labels those edges. Open **Forensic Audit** first, check Analysis Jobs for completion, then open **Evidence Graph** and click **Reload graph**.
+
+
+## Cross-Dataset Lab: no target collection is available
+
+Cross-Dataset Lab needs **two separately imported collections**. Selecting HAM10000 as the source does not automatically create a second collection. If only one dataset is loaded, use **Import another dataset** in the lab. If other datasets are present, the compatibility panel explains why each is unavailable.
+
+A selectable target must have:
+- the same declared image modality as the source;
+- exactly the same label strings as the source model's training classes;
+- a held-out `test` partition;
+- no known exact-file or recorded decoded-pixel hash overlap.
+
+The worker performs an additional decoded-pixel identity check. Do not relabel classes or choose a different modality merely to bypass this gate. Matching names and modality do not prove clinical equivalence. If your authorized second dataset uses numeric MedMNIST class IDs while HAM10000 uses diagnosis strings, create and independently verify an explicit label mapping before considering those datasets compatible; this UI does not infer that mapping.
+
+## Impact Simulator: no confirmed training-image findings
+
+The Impact Simulator is a **removal-only ablation**, not a general baseline comparison. It requires a completed forensic audit and at least one reviewer-confirmed finding that links to an image in the `train` split. Eligible finding families are split leakage, group overlap, exact/pixel/near duplicates and label suspicion.
+
+1. Run **Forensic Audit** and wait for the job to complete.
+2. Open **Review Center** and inspect the actual evidence and linked image records.
+3. Confirm a finding only when its evidence supports the concern. A dataset-wide finding, a source-association-only finding, or a finding linked only to validation/test images does not qualify.
+4. Return to **Impact Simulator**. Its readiness panel reports the count of confirmed training records eligible for removal and whether the CPU model-fit subset still contains enough examples/classes.
+5. Run the removal-only ablation only when the panel says **Ready to run**.
+
+If the audit finds no eligible concerns, the correct outcome is that the Impact Simulator remains unavailable. Do not manufacture confirmations to force an experiment. Original image files and labels are not overwritten; the experiment creates a separate derived metadata version and retains the fixed held-out test cohort.
