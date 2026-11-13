@@ -180,3 +180,19 @@ test('baseline failure provides a clear Analysis Jobs link',()=>{
  assert.ok(html.includes('data-action="jobs"'));
  assert.ok(html.includes('data-action="baseline-launch"'));
 });
+
+test('baseline failure displays actionable data checks and the exact previous job error',()=>{
+ const html=vm.runInContext("state.detail={dataset:{id:'demo',name:'Sorted data'},experiments:[]};\n  state.baselineReadiness={ready:false,train_count:13,test_count:4,training_class_counts:{class_a:13},\n    reasons:['At least 20 decodable training images are needed.','At least 2 training classes are needed.'],\n    warnings:[],last_attempt:{status:'failed',error:'ValueError: 2 training classes required'}};\n  renderFailures()",ctx);
+ assert.ok(html.includes('Baseline readiness'));
+ assert.ok(html.includes('Dataset not ready'));
+ assert.ok(html.includes('At least 2 training classes are needed.'));
+ assert.ok(html.includes('ValueError: 2 training classes required'));
+ assert.ok(!html.includes('Test macro-F1'));
+});
+test('a completed baseline row without a checkpoint cannot unlock model labs',()=>{
+ const results=vm.runInContext("state.detail={dataset:{id:'demo',name:'Research set'},\n   experiments:[{kind:'baseline',status:'completed',checkpoint_available:false,result:{}}]};\n  state.baselineReadiness={ready:true,train_count:30,test_count:9,\n   training_class_counts:{a:15,b:15},warnings:[],reasons:[],\n   last_attempt:{status:'completed',checkpoint_available:false}};\n  [renderShortcut(),renderCounterfactual(),renderFailures()]",ctx);
+ assert.ok(!results[0].includes('data-action="shortcut"'));
+ assert.ok(!results[1].includes('data-action="counterfactual-launch"'));
+ assert.ok(results[2].includes('previous model file is missing'));
+ assert.ok(results[2].includes('Train baseline'));
+});
