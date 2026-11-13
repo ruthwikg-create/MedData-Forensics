@@ -553,17 +553,90 @@ function renderCounterfactual(){
  return h;
 }
 
-function renderCross(){let {html,e}=labBase('GENERALIZATION TEST','Cross-Dataset Reliability Lab','Evaluate a frozen baseline model against a second, explicitly compatible research dataset.','cross_dataset','Run external evaluation');
+function renderCross(){
+ let {html,e}=labBase('GENERALIZATION TEST','Cross-Dataset Reliability Lab','Evaluate a frozen baseline model against a second, explicitly compatible research dataset.','cross_dataset','Run external evaluation');
  if(!state.detail)return html;
- html=html.replace('data-experiment="cross_dataset"','data-action="cross-launch"');
- const others=state.datasets.filter(d=>d.id!==state.did);
- html+=`<div class="card card-padded" style="margin-bottom:20px"><div class="card-title"><h3>External research collection</h3></div><div class="field"><label for="crossTarget">Target dataset</label><select class="select" id="crossTarget"><option value="">Choose a distinct collection</option>${others.map(d=>`<option value="${esc(d.id)}">${esc(d.name)} (${number(d.sample_count)} samples)</option>`).join('')}</select><small>The declared modality and complete label vocabulary must match. Text matches alone do not establish clinical compatibility.</small></div></div>`;
- if(e){const r=e.result,m=r.external_test?.metrics||{};html+=`<div class="stats-row">${stat('External macro-F1',metric(m.macro_f1),'Frozen model')}${stat('Balanced accuracy',metric(m.balanced_accuracy),'Target dataset')}${stat('Target samples',number(m.n),'Held-out target test')}${stat('Data source',short(r.target_dataset_id),'Target dataset ID')}</div>${notice((r.comparison_limits||[]).join(' '),'warn')}`;}
+ const readiness=state.crossReadiness||{targets:[],compatible_target_count:0};
+ const targets=readiness.targets||[],compatible=targets.filter(target=>target.compatible);
+ if(!compatible.length){
+  html=html.replace(/<button type="button" class="btn btn-primary" data-action="cross-launch">[\s\S]*?<\/button>/,
+   '<button type="button" class="btn btn-primary" disabled aria-disabled="true">'+icon('lock')+' Awaiting compatible dataset</button>');
+ }
+ const candidateRows=targets.map(target=>{
+  const status=target.compatible?pill('Compatible','green'):pill('Not compatible','amber');
+  const why=target.compatible?'Labels, declared modality and target test split match.':
+    (target.reasons||[]).join(' ');
+  return '<div class="lab-target-item"><div class="lab-target-copy"><strong>'+esc(target.name)+'</strong>'+
+    '<small>'+number(target.sample_count)+' images · '+esc(target.modality||'Modality not recorded')+'</small>'+
+    '<p>'+esc(why)+'</p></div>'+status+'</div>';
+ }).join('');
+ let selector='';
+ if(compatible.length){
+  selector='<div class="field"><label for="crossTarget">Compatible target dataset</label><select class="select" id="crossTarget" required>'+
+   '<option value="">Choose a compatible collection</option>'+
+   compatible.map(target=>'<option value="'+esc(target.id)+'">'+esc(target.name)+' ('+number(target.sample_count)+' images)</option>').join('')+
+   '</select><small>Only collections passing the metadata preflight are selectable. The worker performs an additional decoded-pixel duplicate check.</small></div>';
+ }
+ html+='<section class="card card-padded lab-readiness-card"><div class="card-title"><h3>External research collection</h3>'+
+   pill(compatible.length+' compatible','blue')+'</div>'+
+   (targets.length?selector:'<div class="lab-empty-state"><strong>Only one dataset is currently loaded</strong>'+
+    '<p>Cross-Dataset Lab needs a second, independently collected dataset. Import another collection before continuing.</p>'+
+    '<p class="fine">The target must have the same declared image modality, exactly matching class labels, a held-out test split and no known image-hash overlap.</p>'+
+    '<div class="actions">'+btn(icon("upload")+' Import another dataset','import','btn-primary')+
+    btn('Import a large ZIP','large-import','btn')+'</div></div>')+
+   (targets.length&&!compatible.length?'<div class="lab-empty-state"><strong>No compatible target found</strong>'+
+    '<p>Other datasets are loaded, but none currently meets the compatibility requirements. Do not choose a mismatched dataset just to make the experiment run.</p>'+
+    '<div class="actions">'+btn('Import another dataset','import','btn-primary')+
+    btn('Import a large ZIP','large-import','btn')+'</div></div>':'')+
+   (candidateRows?'<div class="lab-target-list" aria-label="Dataset compatibility results">'+candidateRows+'</div>':'')+
+   '<p class="fine">A matching label name and modality are only technical screening criteria. They do not prove that two datasets have clinically equivalent labels or populations.</p></section>';
+ if(e){const r=e.result,m=r.external_test?.metrics||{};html+='<div class="stats-row">'+stat('External macro-F1',metric(m.macro_f1),'Frozen model')+stat('Balanced accuracy',metric(m.balanced_accuracy),'Target dataset')+stat('Target samples',number(m.n),'Held-out target test')+stat('Data source',short(r.target_dataset_id),'Target dataset ID')+'</div>'+notice((r.comparison_limits||[]).join(' '),'warn');}
  return html;
 }
-function renderImpact(){const {html,e}=labBase('INTERVENTION ANALYSIS','Audit Impact Simulator','Compare frozen-test performance before and after removing reviewer-confirmed training samples.','impact','Run removal-only ablation');
- if(!e)return html;
- const r=e.result;return html+`<div class="stats-row">${stat('Samples excluded',number(r.removed_count),'Training partition only')}${stat('Baseline macro-F1',metric(r.before?.macro_f1),'Original training set')}${stat('Curated macro-F1',metric(r.after?.macro_f1),'Removal-only ablation')}${stat('F1 change',(r.macro_f1_delta>=0?'+':'')+metric(r.macro_f1_delta),'Not necessarily improvement')}</div>${notice((r.limitations||[]).join(' '),'warn')}${card('Independent evaluation contract',`<dl><div class="kv"><dt>Original train count</dt><dd>${number(r.original_train_n)}</dd></div><div class="kv"><dt>Curated train count</dt><dd>${number(r.curated_train_n)}</dd></div><div class="kv"><dt>Frozen test fingerprint</dt><dd class="mono">${esc(r.evaluation_test_ids_sha256)}</dd></div></dl>`)}`;
+function renderImpact(){
+ const {html,e}=labBase('INTERVENTION ANALYSIS','Audit Impact Simulator','Compare frozen-test performance before and after removing reviewer-confirmed training samples.','impact','Run removal-only ablation');
+ if(!state.detail)return html;
+ const r=state.impactReadiness||{ready:false,reasons:['Checking the evidence and training split…']};
+ const last=r.last_attempt;
+ const status=r.ready?pill('Ready to run','green'):pill('Prerequisites missing','amber');
+ const previousFailure=last?.status==='failed'?
+  '<div class="baseline-last-error" role="alert"><strong>Previous attempt did not complete</strong><p>'+
+  esc(last.error||'No detailed failure reason was saved.')+
+  '</p><p class="fine">No impact metrics were produced by that attempt. Fix the prerequisites below before trying again.</p></div>':'';
+ const reasonList=(r.reasons||[]).map(reason=>'<li>'+esc(reason)+'</li>').join('');
+ const counts='<div class="stats-row">'+
+  stat('Training images',number(r.train_count),'Source training split')+
+  stat('Confirmed findings',number(r.confirmed_supported_findings),'Supported and linked to training')+
+  stat('Training images to exclude',number(r.confirmed_training_samples),'Reviewer-confirmed only')+
+  stat('Held-out test images',number(r.test_count),'Kept fixed')+'</div>';
+ let next='';
+ if(!r.ready){
+  const steps=[];
+  if(!r.audit_completed)steps.push('Run Forensic Audit to generate evidence-linked findings.');
+  if(r.suspected_training_samples>0)steps.push('Open Review Center, inspect the evidence and source images, then confirm only genuine supported concerns linked to the training split.');
+  else if(!r.confirmed_training_samples)steps.push('If the audit finds supported image-linked concerns, review them before confirming. Dataset-wide findings and findings linked only to validation/test images do not qualify.');
+  if(r.confirmed_training_samples>0)steps.push('Check the remaining training-class counts and CPU model-fit subset before rerunning.');
+  next='<div class="impact-next-steps"><strong>What to do next</strong><ol>'+steps.map(step=>'<li>'+esc(step)+'</li>').join('')+'</ol><p class="fine">Eligible evidence types: split leakage, group overlap, exact/pixel/near duplicates and label suspicion. A confirmation is a reviewer decision, not proof of a medical label error.</p>'+
+   '<div class="actions">'+(!r.audit_completed?btn(icon('play')+' Run forensic audit','run-audit','btn-primary'):'')+
+   btn('Open Review Center','go-review','btn-primary')+
+   btn('Open Forensic Audit','go-audit','btn')+'</div></div>';
+ }else{
+  next='<div class="impact-ready-note"><strong>Evidence prerequisites satisfied.</strong><p>'+number(r.confirmed_training_samples)+
+   ' distinct training image(s) are eligible for a removal-only comparison. The source dataset and held-out test records will remain unchanged.</p></div>';
+ }
+ let htmlOut=html+'<section class="card card-padded impact-readiness-card"><div class="card-title"><h3>Impact experiment readiness</h3>'+status+'</div>'+
+  counts+(reasonList?'<div class="baseline-messages"><strong>Why this experiment is not ready</strong><ul>'+reasonList+'</ul></div>':'')+
+  previousFailure+next+'</section>';
+ if(!e)return htmlOut;
+ const result=e.result;return htmlOut+'<div class="stats-row">'+
+  stat('Samples excluded',number(result.removed_count),'Training partition only')+
+  stat('Baseline macro-F1',metric(result.before?.macro_f1),'Original training set')+
+  stat('Curated macro-F1',metric(result.after?.macro_f1),'Removal-only ablation')+
+  stat('F1 change',(result.macro_f1_delta>=0?'+':'')+metric(result.macro_f1_delta),'Not necessarily improvement')+
+  '</div>'+notice((result.limitations||[]).join(' '),'warn')+
+  card('Independent evaluation contract','<dl><div class="kv"><dt>Original train count</dt><dd>'+number(result.original_train_n)+
+   '</dd></div><div class="kv"><dt>Curated train count</dt><dd>'+number(result.curated_train_n)+
+   '</dd></div><div class="kv"><dt>Frozen test fingerprint</dt><dd class="mono">'+esc(result.evaluation_test_ids_sha256)+'</dd></div></dl>');
 }
 function baselineReadinessPanel(){
  const r=state.baselineReadiness;if(!r)return '';
@@ -673,6 +746,8 @@ async function loadView(){const did=state.did;
  if(state.view==='graph')state.graph=await api(`/api/datasets/${did}/graph?limit=100`);
  if(state.view==='privacy')state.privacy=await api('/api/privacy');
  if(state.view==='failures')state.baselineReadiness=await api('/api/datasets/'+did+'/baseline-readiness');
+ if(state.view==='cross')state.crossReadiness=await api('/api/datasets/'+did+'/cross-dataset-readiness');
+ if(state.view==='impact')state.impactReadiness=await api('/api/datasets/'+did+'/impact-readiness');
 }
 const RENDER={overview:renderOverview,dna:renderDNA,audit:renderAudit,graph:renderGraph,review:renderReview,shortcut:renderShortcut,counterfactual:renderCounterfactual,cross:renderCross,impact:renderImpact,failures:renderFailures,repro:renderRepro,privacy:renderPrivacy};
 async function render(){try{$('#main').innerHTML='<div class="loading-screen"><div class="spinner"></div><p>Loading research evidence…</p></div>';await loadView();$('#crumbCurrent').textContent=({dna:'Dataset DNA',audit:'Forensic Audit',graph:'Evidence Graph',review:'Review Center',shortcut:'Shortcut Inspector',counterfactual:'Counterfactual Lab',cross:'Cross-Dataset Lab',impact:'Impact Simulator',failures:'Failure Explorer',repro:'Reproducibility',privacy:'Privacy & Integrity'})[state.view]||'Overview';const rendered=(RENDER[state.view]||renderOverview)();if(typeof rendered!=='string'||!rendered.trim())throw Error('The '+state.view+' workspace did not render correctly.');$('#main').innerHTML=rendered;document.querySelectorAll('.nav-link').forEach(b=>b.classList.toggle('active',b.dataset.view===state.view));if(state.view==='graph'&&state.graph?.nodes?.length)drawGraph(state.graph);if(state.view==='counterfactual'&&state.samples?.items?.length)updateCounterfactualPreview();}catch(e){renderError(e)}}
@@ -762,6 +837,23 @@ async function launchExperiment(kind,config={}){
    if(!readiness.ready){
     toast('Cannot train yet: '+(readiness.reasons?.[0]||'Dataset prerequisites missing'),true);
     await navigate('failures');return;
+   }
+  }
+  if(kind==='impact'){
+   const readiness=await api('/api/datasets/'+state.did+'/impact-readiness');
+   state.impactReadiness=readiness;
+   if(!readiness.ready){
+    toast(readiness.reasons?.[0]||'Impact Simulator prerequisites are not satisfied.',true);
+    await navigate('impact');return;
+   }
+  }
+  if(kind==='cross_dataset'){
+   const readiness=await api('/api/datasets/'+state.did+'/cross-dataset-readiness');
+   state.crossReadiness=readiness;
+   const target=readiness.targets?.find(item=>item.id===config.target_dataset_id);
+   if(!target||!target.compatible){
+    toast(target?.reasons?.join(' ')||'Choose an imported compatible target dataset.',true);
+    await navigate('cross');return;
    }
   }
   if(['shortcut','counterfactual','cross_dataset'].includes(kind)&&!bestExp('baseline')){
@@ -914,7 +1006,7 @@ async function handleAction(action){switch(action){case 'import':return openImpo
  case 'graph-reset':state.graphUi={search:'',severity:'all',links:'all',zoom:1};$('#main').innerHTML=renderGraph();drawGraph(state.graph);return;
  case 'failure-reset':state.failureCell='';return updateFailureExplorer();
  case 'rankings':{state.rankingBudget=Number($('#rankingBudget')?.value||4);const target=$('#rankingResult');if(target)target.innerHTML='<div class="rank-pending" role="status">Comparing real candidate order…</div>';state.rankings=await api('/api/datasets/'+state.did+'/rankings?budget='+state.rankingBudget);if(target)target.innerHTML=renderRankings();return;}case 'filter-findings':state.activeFilters={kind:$('#findingKind')?.value||'',status:$('#findingStatus')?.value||''};state.findingPage=1;return render();case 'filter-samples':state.dnaFilters={split:$('#dnaSplit')?.value||'',label:$('#dnaLabel')?.value||'',search:$('#dnaSearch')?.value||''};state.sampleFilter=dnaFilterQuery(state.dnaFilters);state.samplePage=1;return render();
- case 'clear-sample-filters':state.dnaFilters={split:'',label:'',search:''};state.sampleFilter=dnaFilterQuery(state.dnaFilters);state.samplePage=1;return render();case 'go-audit':return navigate('audit');case 'go-privacy':return navigate('privacy');case 'baseline-launch':return launchExperiment('baseline',{seed:42});case 'shortcut':return launchExperiment('shortcut',{seed:42});case 'impact':return launchExperiment('impact',{seed:42});case 'counterfactual-launch':{const sid=$('#counterSample')?.value;if(!sid)return toast('Select a research image first',true);return launchExperiment('counterfactual',{sample_id:sid,strength:Number($('#counterfactualAmount')?.value||40)/100})}case 'cross-launch':{const did=$('#crossTarget')?.value;if(!did)return toast('Select a target dataset first',true);return launchExperiment('cross_dataset',{target_dataset_id:did})}case 'scenario-launch':return launchExperiment('scenario',{seed:Number($('#scenarioSeed').value),label_flip_rate:Number($('#scenarioRate').value)});case 'verify-integrity':{if(!state.did)return toast('Select a dataset first',true);try{const info=await api('/api/datasets/'+state.did+'/verify');const target=$('#integrityResults');if(target)target.innerHTML=`<div class="notice ${info.passed?'':'warning'}" style="margin-top:12px"><strong>${info.passed?'Integrity check passed':'Integrity check found issues'}</strong><p>Files checked: ${number(info.checked_files)} · Problems: ${number(info.problem_count)}</p><p class="fine">${esc((info.problems||[]).slice(0,5).map(p=>p.kind+': '+(p.sample_id||'manifest')).join('; ') || 'No recorded mismatches.')}</p></div>`;}catch(e){toast(e.message,true)}return;}case 'download-json':window.location.href='/api/datasets/'+state.did+'/report?format=json';return;case 'auth-prompt':openModal('Local access token',`<div class="field"><label for="authToken">MDF_ACCESS_TOKEN</label><input class="input" type="password" id="authToken" placeholder="Enter configured token"></div>${btn('Authenticate','save-token','btn-primary')}`);return;case 'save-token':storage.set('sessionStorage','mdf-token',$('#authToken').value);await api('/api/session',{method:'POST'});toast('Authenticated for this local session');return;default:toast('Unknown control: '+action,true)}}
+ case 'clear-sample-filters':state.dnaFilters={split:'',label:'',search:''};state.sampleFilter=dnaFilterQuery(state.dnaFilters);state.samplePage=1;return render();case 'go-audit':return navigate('audit');case 'go-review':return navigate('review');case 'go-privacy':return navigate('privacy');case 'baseline-launch':return launchExperiment('baseline',{seed:42});case 'shortcut':return launchExperiment('shortcut',{seed:42});case 'impact':return launchExperiment('impact',{seed:42});case 'counterfactual-launch':{const sid=$('#counterSample')?.value;if(!sid)return toast('Select a research image first',true);return launchExperiment('counterfactual',{sample_id:sid,strength:Number($('#counterfactualAmount')?.value||40)/100})}case 'cross-launch':{const did=$('#crossTarget')?.value;if(!did)return toast('Select a target dataset first',true);return launchExperiment('cross_dataset',{target_dataset_id:did})}case 'scenario-launch':return launchExperiment('scenario',{seed:Number($('#scenarioSeed').value),label_flip_rate:Number($('#scenarioRate').value)});case 'verify-integrity':{if(!state.did)return toast('Select a dataset first',true);try{const info=await api('/api/datasets/'+state.did+'/verify');const target=$('#integrityResults');if(target)target.innerHTML=`<div class="notice ${info.passed?'':'warning'}" style="margin-top:12px"><strong>${info.passed?'Integrity check passed':'Integrity check found issues'}</strong><p>Files checked: ${number(info.checked_files)} · Problems: ${number(info.problem_count)}</p><p class="fine">${esc((info.problems||[]).slice(0,5).map(p=>p.kind+': '+(p.sample_id||'manifest')).join('; ') || 'No recorded mismatches.')}</p></div>`;}catch(e){toast(e.message,true)}return;}case 'download-json':window.location.href='/api/datasets/'+state.did+'/report?format=json';return;case 'auth-prompt':openModal('Local access token',`<div class="field"><label for="authToken">MDF_ACCESS_TOKEN</label><input class="input" type="password" id="authToken" placeholder="Enter configured token"></div>${btn('Authenticate','save-token','btn-primary')}`);return;case 'save-token':storage.set('sessionStorage','mdf-token',$('#authToken').value);await api('/api/session',{method:'POST'});toast('Authenticated for this local session');return;default:toast('Unknown control: '+action,true)}}
 document.addEventListener('click',async e=>{
  const nav=e.target.closest('[data-view]');if(nav){navigate(nav.dataset.view);return}
  const act=e.target.closest('[data-action]');if(act){act.disabled=true;try{await handleAction(act.dataset.action)}catch(err){toast(err.message,true)}finally{if(act.isConnected)act.disabled=false}return}
