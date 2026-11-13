@@ -36,6 +36,16 @@ Charts: limited bar meters and confusion matrices with numeric labels. Evidence 
 
 Security UX: identifiers displayed in truncated form only for UI convenience with full evidence in details; export flows warn of data-governance responsibilities; sample image requests route through server rather than public static assets.
 
+## Evidence explorer and model evaluation interactions
+
+The Evidence Graph is an investigative viewer, never a simulated network. Its search box accepts sample IDs, split metadata and finding names; severity filters narrow actual findings and retain only their original sample links. Connection filters distinguish linked records from isolated real nodes. Zoom controls use 75%, 100%, 125% and 150% sizing with visible buttons; keyboard operators can Tab into the canvas and open any node with Enter or Space. A source observation never becomes a clinical fact due to interaction.
+
+The diagram previews at most 14 matching findings and 28 matching images at once; the index shows up to 24 findings and explains these bounded limits. There is no client-side invented relationship, and severity filters never relabel detector outputs.
+
+The Model Failure Explorer confusion matrix uses native focusable buttons for each actual-versus-predicted cell. Selecting a cell filters the actual held-out prediction records in the image gallery, including correct cells. A **Show all errors** control returns to the default view. Counts, class labels, warnings and thumbnails come only from saved experiment results.
+
+Interaction states: editable search field, select changes, zoom disabled endpoints, focus-visible outlines, explicit zero-match empty state, persistent textual evidence counts, reduced-motion support. Touch controls have a minimum 44px vertical target. Dynamic graph filters update without a network request or discarding the current dataset. Switching datasets resets the graph and failure selections, preventing stale evidence from being shown.
+
 ## Final acceptance checklist
 
 - [x] Working active navigation and dataset selector

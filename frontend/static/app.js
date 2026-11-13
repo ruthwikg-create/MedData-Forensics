@@ -35,7 +35,7 @@ const pct=x=>x==null?'—':(Number(x)*100).toFixed(1)+'%';
 const number=x=>Number(x||0).toLocaleString('en-US');
 const short=x=>String(x||'').length>24?String(x).slice(0,12)+'…'+String(x).slice(-8):String(x||'');
 const title=s=>s.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
-const state={view:'overview',datasets:[],did:'',detail:null,overview:null,findings:null,analysisJob:null,activeFilters:{kind:'',status:''},samplePage:1,reviewPage:1,modal:null};
+const state={view:'overview',datasets:[],did:'',detail:null,overview:null,findings:null,analysisJob:null,activeFilters:{kind:'',status:''},samplePage:1,reviewPage:1,modal:null,graphUi:{search:'',severity:'all',links:'all',zoom:1},failureCell:''};
 let lastFocused=null, refreshTimer=null;
 async function api(path,opt={}){
   const headers={...(opt.headers||{})}; const token=storage.get('sessionStorage','mdf-token');if(token)headers['X-MDF-Token']=token;
@@ -189,26 +189,104 @@ function renderReview(){const d=state.detail?.dataset;const items=state.findings
  return html;
 }
 function CounterStatus(items){const a={suspected:0,confirmed:0,uncertain:0,rejected:0};items.forEach(f=>a[f.status]=(a[f.status]||0)+1);return a;}
-function renderGraph(){
- let html=head('EVIDENCE EXPLORATION','Forensic Evidence Graph','Explore the real evidence links between findings and image records. Unlinked records are displayed without fabricated connections.',btn('Run audit','run-audit','btn-primary')+' '+btn('Reload graph','refresh'));
- if(!state.detail)return html+needDataset();
- const g=state.graph||{nodes:[],edges:[]};
- const edges=g.edges||[];
- const nodes=g.nodes||[];
- const linked=Number(g.linked_finding_count??new Set(edges.map(e=>e.source)).size);
- const status=edges.length?`${number(linked)} linked findings · ${number(edges.length)} evidence connections`:
-  g.audit_completed?`Audit completed · no image-linked evidence connections`:'No completed audit yet';
- html+=notice(g.note||'Graph links are detector observations, not proof of shared patient identity.',edges.length?'':'warn');
- html+=`<div class="card card-padded"><div class="card-title"><h3>${esc(status)}</h3><div class="graph-legend"><span class="legend-item"><span class="legend-dot"></span>Image record</span><span class="legend-item"><span class="legend-dot blue"></span>Finding</span></div></div>`;
- if(nodes.length){
-  html+=`<div class="graph-scroll-hint">${edges.length?'Scroll to inspect linked images and findings.':'No detector-supported links exist in this result. These are isolated real dataset nodes, not fabricated relationships.'}</div><div id="nodeGraph" class="node-graph" role="region" tabindex="0" aria-label="${edges.length?'Audited evidence network':'Unlinked dataset image and finding nodes'}; scroll to explore"></div><p class="fine" style="margin-top:12px">${number(nodes.length)} actual record/finding nodes, ${number(edges.length)} verified detector observations. Click a node for its evidence. ${g.truncated?'Showing a priority-ranked subset of findings.':''}</p>`;
- }else html+=empty('No image records available','Import a research dataset to explore its actual records and run an audit to discover supported links.',btn('Import dataset','import'));
- html+='</div>';
- if(!g.audit_completed)html+=`<div class="module-next" style="margin-top:20px"><div><strong>Generate the first evidence network</strong><p>Run the audit. Only detector-supported links will be drawn.</p></div>${btn(icon('play')+' Run forensic audit','run-audit','btn-primary')}</div>`;
- if(g.audit_completed&&nodes.some(n=>n.type==='finding')){
-   const list=nodes.filter(n=>n.type==='finding').slice(0,12).map(n=>`<button type="button" class="graph-list-item" data-finding="${esc(n.id.slice(2))}"><span>${esc(n.label)}</span>${pill(n.status||'suspected')}${icon('arrow')}</button>`).join('');
-   html+=card('Evidence finding index',`<div class="graph-finding-index">${list}</div><p class="tiny">Select a finding to inspect source images, measurements and review history.</p>`);
+function graphVisibleData(graph,settings=state.graphUi){
+ const nodes=Array.isArray(graph?.nodes)?graph.nodes:[];
+ const originals=Array.isArray(graph?.edges)?graph.edges:[];
+ const byId=new Map(nodes.map(n=>[n.id,n]));
+ const edges=originals.filter(e=>byId.has(e.source)&&byId.has(e.target));
+ const search=String(settings?.search||'').trim().toLocaleLowerCase();
+ const severity=settings?.severity||'all', mode=settings?.links||'all';
+ const filteredFindings=new Set(nodes.filter(n=>n.type==='finding'&&(severity==='all'||n.severity===severity)).map(n=>n.id));
+ const eligible=new Set(nodes.filter(n=>n.type==='sample'||filteredFindings.has(n.id)).map(n=>n.id));
+ const eligibleEdges=edges.filter(e=>eligible.has(e.source)&&eligible.has(e.target));
+ let selected=new Set(eligible);
+ if(search){
+  const matching=new Set(nodes.filter(n=>eligible.has(n.id)&&[n.label,n.type,n.status,n.severity,n.split,n.group]
+    .some(value=>String(value||'').toLocaleLowerCase().includes(search))).map(n=>n.id));
+  selected=new Set(matching);
+  eligibleEdges.forEach(e=>{
+   if(matching.has(e.source))selected.add(e.target);
+   if(matching.has(e.target))selected.add(e.source);
+  });
+ }else if(severity!=='all'){
+  selected=new Set(filteredFindings);
+  eligibleEdges.forEach(e=>{if(filteredFindings.has(e.source))selected.add(e.target)});
  }
+ const matchingEdges=eligibleEdges.filter(e=>selected.has(e.source)&&selected.has(e.target));
+ if(mode!=='all'){
+  const linkedIds=new Set(matchingEdges.flatMap(e=>[e.source,e.target]));
+  selected=new Set([...selected].filter(id=>mode==='linked'?linkedIds.has(id):!linkedIds.has(id)));
+ }
+ return {nodes:nodes.filter(n=>selected.has(n.id)),
+         edges:matchingEdges.filter(e=>selected.has(e.source)&&selected.has(e.target)),
+         sourceNodeCount:nodes.length,sourceEdgeCount:edges.length};
+}
+function graphOption(value,current,label){return '<option value="'+esc(value)+'"'+(value===current?' selected':'')+'>'+esc(label)+'</option>';}
+function renderGraphExplorerResults(graph){
+ const view=graphVisibleData(graph),findings=view.nodes.filter(n=>n.type==='finding');
+ const linked=new Set(view.edges.map(e=>e.source)).size;
+ const summary='<p class="graph-results-count" role="status">'+number(view.nodes.length)+' matching records · '+
+    number(view.edges.length)+' detector links · '+number(linked)+' linked findings</p>';
+ const index=findings.slice(0,24).map(n=>'<button type="button" class="graph-list-item" data-finding="'+esc(n.id.slice(2))+'">'+
+   '<span><strong>'+esc(n.label||'Unlabelled finding')+'</strong><small>'+esc((n.severity||'ungraded')+' · '+(n.status||'unreviewed'))+
+   '</small></span>'+icon('arrow')+'</button>').join('');
+ const listing=index?'<section class="graph-result-index"><h4>Inspect matching findings</h4><div class="graph-finding-index">'+index+'</div>'+
+    (findings.length>24?'<p class="fine">Showing the first 24 matching findings; narrow your filters to inspect others.</p>':'')+'</section>':'';
+ if(!view.nodes.length){
+  return summary+'<div class="graph-empty-results"><strong>No matching records</strong><p>Change the search or filters. No evidence relationships are inferred.</p>'+
+  '<button class="btn btn-small" type="button" data-action="graph-reset">Clear graph filters</button></div>';
+ }
+ return summary+'<div class="graph-scroll-hint">'+
+    (view.edges.length?'Scroll to inspect real linked images and findings. Select a node for the underlying evidence.':
+    'No detector-supported links in this selection. These are isolated real dataset nodes, not fabricated relationships.')+'</div>'+
+    '<div id="nodeGraph" class="node-graph" role="region" tabindex="0" aria-label="Interactive evidence graph; scroll to explore"></div>'+
+    '<p class="fine graph-canvas-footnote">Diagram previews up to 14 findings and 28 image records. '+number(view.nodes.length)+
+    ' matched records are available through the filters and evidence index. Edges are detector observations, not confirmed patient identity.</p>'+listing;
+}
+function updateGraphExplorer(){
+ const result=$('#graphExplorerResults');if(!result||!state.graph)return;
+ result.innerHTML=renderGraphExplorerResults(state.graph);
+ const value=$('#graphZoomValue');if(value)value.textContent=Math.round(state.graphUi.zoom*100)+'%';
+ const less=document.querySelector('[data-action="graph-zoom-out"]');
+ const more=document.querySelector('[data-action="graph-zoom-in"]');
+ if(less)less.disabled=state.graphUi.zoom<=0.75;
+ if(more)more.disabled=state.graphUi.zoom>=1.5;
+ drawGraph(state.graph);
+}
+function renderGraph(){
+ let html=head('EVIDENCE EXPLORATION','Forensic Evidence Graph',
+    'Search and inspect actual image records and detector findings without inventing relationships.',
+    btn('Run audit','run-audit','btn-primary')+' '+btn('Reload graph','refresh'));
+ if(!state.detail)return html+needDataset();
+ const graph=state.graph||{nodes:[],edges:[]};
+ const allEdges=Array.isArray(graph.edges)?graph.edges:[];
+ const allNodes=Array.isArray(graph.nodes)?graph.nodes:[];
+ const status=allEdges.length?number(allEdges.length)+' observed image–finding links':
+   graph.audit_completed?'Audit complete · no image-linked evidence':'No completed audit yet';
+ html+=notice(graph.note||'Connections are detector observations, not verified medical identities.',allEdges.length?'':'warn');
+ html+='<section class="card card-padded graph-workbench"><div class="card-title"><h3>'+esc(status)+
+  '</h3><div class="graph-legend"><span class="legend-item"><span class="legend-dot"></span>Image record</span>'+
+  '<span class="legend-item"><span class="legend-dot blue"></span>Detector finding</span></div></div>';
+ if(allNodes.length){
+  const ui=state.graphUi;
+  html+='<div class="graph-toolbar" role="group" aria-label="Evidence graph tools">'+
+   '<label class="graph-field graph-search"><span>Search evidence</span><input class="input" id="graphSearch" type="search" autocomplete="off" '+
+   'placeholder="Sample ID, finding, split…" value="'+esc(ui.search||'')+'"></label>'+
+   '<label class="graph-field"><span>Severity</span><select class="select" id="graphSeverity">'+
+   [['all','All severities'],['critical','Critical'],['high','High'],['medium','Medium'],['low','Low']].map(([v,l])=>graphOption(v,ui.severity,l)).join('')+
+   '</select></label><label class="graph-field"><span>Connections</span><select class="select" id="graphLinks">'+
+   [['all','All real records'],['linked','Linked only'],['unlinked','Unlinked only']].map(([v,l])=>graphOption(v,ui.links,l)).join('')+
+   '</select></label><div class="graph-zoom-controls"><span class="graph-zoom-label">Zoom</span><div class="graph-zoom-buttons">'+
+   '<button class="btn btn-small" type="button" data-action="graph-zoom-out" aria-label="Zoom evidence graph out" '+(ui.zoom<=0.75?'disabled':'')+'>−</button>'+
+   '<output id="graphZoomValue" aria-label="Graph zoom level">'+Math.round(ui.zoom*100)+'%</output>'+
+   '<button class="btn btn-small" type="button" data-action="graph-zoom-in" aria-label="Zoom evidence graph in" '+(ui.zoom>=1.5?'disabled':'')+'>+</button></div></div>'+
+   '<button class="btn btn-small graph-reset-btn" type="button" data-action="graph-reset">Reset view</button></div>'+
+   '<div id="graphExplorerResults" aria-live="off">'+renderGraphExplorerResults(graph)+'</div>';
+ }else html+=empty('No source records available','Import data or create a synthetic sandbox, then run an audit to investigate evidence.',btn('Import dataset','import'));
+ html+='</section>';
+ if(!graph.audit_completed)html+='<div class="module-next" style="margin-top:20px"><div><strong>Generate the first evidence network</strong>'+
+   '<p>Run the audit; relationships appear only when detectors return actual sample-linked findings.</p></div>'+
+   btn(icon('play')+' Run forensic audit','run-audit','btn-primary')+'</div>';
  return html;
 }
 
@@ -279,17 +357,53 @@ function baselineReadinessPanel(){
     failure+missing+
     '<p class="fine">This check does not guarantee training success or independent test records. The full leakage and file checks run in the background job.</p></div>');
 }
+function renderFailureGallery(experiment){
+ const result=experiment?.result?.test||{},predictions=result.predictions||[];
+ const labels=result.metrics?.labels||[];
+ const cell=String(state.failureCell||'');
+ const ids=cell.match(/^([0-9]+):([0-9]+)$/);
+ const selected=ids&&labels[Number(ids[1])]!==undefined&&labels[Number(ids[2])]!==undefined;
+ const actual=selected?labels[Number(ids[1])]:null,predicted=selected?labels[Number(ids[2])]:null;
+ const rows=predictions.filter(p=>selected?String(p.actual)===String(actual)&&String(p.predicted)===String(predicted):!p.correct);
+ const display=rows.slice(0,36);
+ const heading=selected?'Actual '+String(actual)+' → Predicted '+String(predicted):'Misclassified research samples';
+ const cards=display.map(p=>'<button type="button" class="record" data-sample="'+esc(p.sample_db_id)+'">'+
+  '<img src="/files/'+esc(p.sample_db_id)+'" alt="Research image '+esc(p.sample_id)+'" loading="lazy">'+
+  '<div class="record-content"><span class="record-name">'+esc(p.sample_id)+'</span>'+
+  '<span class="record-label">'+esc(p.actual)+' → '+esc(p.predicted)+'</span></div></button>').join('');
+ return '<section class="card card-padded" id="failureGallery" aria-live="polite">'+
+  '<div class="card-title"><h3>'+esc(heading)+'</h3>'+pill(number(rows.length)+' samples',selected?'blue':'amber')+'</div>'+
+  (selected?'<div class="failure-filter-context"><p>Showing the selected confusion-matrix cell. Counts reflect supplied research labels, not clinical ground truth.</p>'+
+   '<button type="button" class="btn btn-small" data-action="failure-reset">Show all errors</button></div>':'')+
+  '<div class="record-grid">'+cards+'</div>'+
+  (!rows.length?empty(selected?'No records in this cell':'No disagreements on this test split',
+     'This does not establish clinical reliability. Select another cell or review the full evaluation.'):'')+
+  (rows.length>36?'<p class="fine">Showing the first 36 matching image records.</p>':'')+'</section>';
+}
+function updateFailureExplorer(){
+ const e=bestExp('baseline');if(!e)return;
+ const gallery=$('#failureGallery');
+ if(gallery)gallery.outerHTML=renderFailureGallery(e);
+ document.querySelectorAll('[data-confusion]').forEach(button=>{
+  const pressed=button.dataset.confusion===state.failureCell;
+  button.setAttribute('aria-pressed',String(pressed));
+  button.classList.toggle('is-selected',pressed);
+ });
+}
 function renderFailures(){let html=head('PERFORMANCE INVESTIGATION','Model Failure Explorer','Inspect prediction mistakes, confusion matrices, uncertainty and performance across recorded source groups.',btn(icon('play')+' Run baseline','baseline-launch','btn-primary'));
  if(!state.detail)return html+needDataset();
  html+=baselineReadinessPanel();
  const e=bestExp('baseline');if(!e){const failed=state.detail?.experiments?.some(x=>x.kind==='baseline'&&x.status==='failed');return html+(failed?notice('The last baseline model failed. Open Analysis Jobs to read the error, then select Run baseline to retry after updating the software.','warn'):'')+empty('No completed model evaluation yet','Train the CPU baseline to examine test-split misclassifications. For failed attempts, use Analysis Jobs to review the exact error.',btn('Train baseline model','baseline-launch','btn-primary')+' '+btn('View failed jobs','jobs'));}
  const r=e.result.test||{},m=r.metrics||{},errors=(r.predictions||[]).filter(x=>!x.correct);
  html+=notice('These are research-label disagreements from a lightweight model. Misclassification is not a verified clinical diagnosis error.');
+ if(e.result.training_warnings?.length)html+=notice('Training cautions: '+e.result.training_warnings.join(' '),'warn');
  html+=`<div class="stats-row">${stat('Test macro-F1',metric(m.macro_f1),'Bootstrap interval: '+((m.macro_f1_ci95||[]).map(metric).join(' to ')||'n/a'))}${stat('Balanced accuracy',metric(m.balanced_accuracy),'Class-balanced test metric')}${stat('Test errors',number(errors.length),'Disagreements with supplied labels')}${stat('Calibration error',metric(m.expected_calibration_error),'Exploratory ECE; lower is better')}</div>`;
- const cm=m.confusion_matrix||[];let mat='';if(cm.length){const mx=Math.max(1,...cm.flat());mat=`<div class="cm-grid" style="grid-template-columns:repeat(${cm.length},minmax(0,1fr))">${cm.flatMap((row,i)=>row.map((v,j)=>`<div class="cm-cell" title="Actual ${esc(m.labels[i])}; Predicted ${esc(m.labels[j])}" style="background:rgba(33,117,104,${(.08+.65*v/mx).toFixed(2)})">${number(v)}<small>${i===j?'correct':'error'}</small></div>`)).join('')}</div><p class="fine" style="margin-top:13px">Rows: actual labels · columns: predicted labels. ${esc((m.labels||[]).join(' · '))}</p>`;}
+ const cm=m.confusion_matrix||[];let mat='';if(cm.length){const mx=Math.max(1,...cm.flat());mat=`<div class="cm-grid" style="grid-template-columns:repeat(${cm.length},minmax(0,1fr))">${cm.flatMap((row,i)=>row.map((v,j)=>{
+ const id=i+':'+j,active=state.failureCell===id,actual=m.labels?.[i]||'',predicted=m.labels?.[j]||'';
+ return `<button type="button" class="cm-cell ${active?'is-selected':''}" data-confusion="${id}" aria-pressed="${active}" aria-label="Inspect ${number(v)} test images, actual ${esc(actual)}, predicted ${esc(predicted)}" title="Inspect actual ${esc(actual)}; predicted ${esc(predicted)}" style="background:rgba(33,117,104,${(.08+.65*v/mx).toFixed(2)})">${number(v)}<small>${i===j?'correct':'error'}</small></button>`;})).join('')}</div><p class="fine" style="margin-top:13px">Rows: actual labels · columns: predicted labels. ${esc((m.labels||[]).join(' · '))}. Select any cell to inspect its actual image records.</p>`;}
  html+=`<div class="two-col equal">${card('Confusion matrix',mat||'<p>No confusion matrix reported.</p>')}${card('Performance by recorded site',`<div class="data-list">${(r.subgroups||[]).map(s=>`<div class="data-row"><div><div class="row-label">${esc(s.name)}</div><div class="row-desc">${s.n} samples</div></div><strong>${s.metric==null?'Insufficient data':pct(s.metric)}</strong></div>`).join('')}</div><p class="fine" style="margin-top:12px">Exploratory subgroup metrics only; no fairness conclusion.</p>`)}</div>`;
  html+=`<div class="two-col equal section-gap">${card('Per-class performance',`<div class="table-wrap"><table><thead><tr><th>Recorded class</th><th>Precision</th><th>Recall</th><th>F1</th><th>N</th></tr></thead><tbody>${(m.labels||[]).map(l=>{const x=m.per_class?.[l]||{};return `<tr><td>${esc(l)}</td><td>${metric(x.precision)}</td><td>${metric(x.recall)}</td><td>${metric(x['f1-score'])}</td><td>${number(x.support)}</td></tr>`}).join('')}</tbody></table></div>`)}${card('Calibration by confidence',`<p class="fine" style="margin-bottom:12px">Empirical accuracy in bins of predicted confidence. Small bins have high uncertainty.</p>${(m.calibration_bins||[]).map(b=>`<div class="bar-row"><span class="bar-label">${Math.round(b.lower*100)}–${Math.round(b.upper*100)}%</span><div class="meter"><div class="meter-fill" style="width:${Math.round(b.empirical_accuracy*100)}%"></div></div><span class="bar-val">${number(b.n)} img</span></div>`).join('')}`)}</div>`;
- html+=`<section class="card card-padded"><div class="card-title"><h3>Misclassified research samples</h3>${pill(number(errors.length)+' errors','amber')}</div><div class="record-grid">${errors.slice(0,36).map(x=>`<button type="button" class="record" data-sample="${esc(x.sample_db_id)}"><img src="/files/${esc(x.sample_db_id)}" alt="Misclassified research sample ${esc(x.sample_id)}" loading="lazy"><div class="record-content"><span class="record-name">${esc(x.sample_id)}</span><span class="record-label">${esc(x.actual)} → ${esc(x.predicted)}</span></div></button>`).join('')}</div>${!errors.length?empty('No disagreements on this test split','This does not imply real-world model reliability.'):''}</section>`;
+ html+=renderFailureGallery(e);
  return html;
 }
 function renderRepro(){const d=state.detail?.dataset;let html=head('SCIENTIFIC TRACEABILITY','Reproducibility Engine','Reopen experiments, inspect immutable manifests and export transparent research audit records.',d?btn(icon('download')+' Export JSON report','download-json','btn-primary'):'');
@@ -326,7 +440,7 @@ async function loadView(){const did=state.did;
   state.findings=await api(`/api/datasets/${did}/findings${q}`);
   if(state.view==='audit')state.rankings=await api(`/api/datasets/${did}/rankings?budget=${state.rankingBudget||4}`);
  }
- if(state.view==='graph')state.graph=await api(`/api/datasets/${did}/graph?limit=30`);
+ if(state.view==='graph')state.graph=await api(`/api/datasets/${did}/graph?limit=100`);
  if(state.view==='privacy')state.privacy=await api('/api/privacy');
  if(state.view==='failures')state.baselineReadiness=await api('/api/datasets/'+did+'/baseline-readiness');
 }
@@ -334,41 +448,52 @@ const RENDER={overview:renderOverview,dna:renderDNA,audit:renderAudit,graph:rend
 async function render(){try{$('#main').innerHTML='<div class="loading-screen"><div class="spinner"></div><p>Loading research evidence…</p></div>';await loadView();$('#crumbCurrent').textContent=({dna:'Dataset DNA',audit:'Forensic Audit',graph:'Evidence Graph',review:'Review Center',shortcut:'Shortcut Inspector',counterfactual:'Counterfactual Lab',cross:'Cross-Dataset Lab',impact:'Impact Simulator',failures:'Failure Explorer',repro:'Reproducibility',privacy:'Privacy & Integrity'})[state.view]||'Overview';const rendered=(RENDER[state.view]||renderOverview)();if(typeof rendered!=='string'||!rendered.trim())throw Error('The '+state.view+' workspace did not render correctly.');$('#main').innerHTML=rendered;document.querySelectorAll('.nav-link').forEach(b=>b.classList.toggle('active',b.dataset.view===state.view));if(state.view==='graph'&&state.graph?.nodes?.length)drawGraph(state.graph);}catch(e){renderError(e)}}
 async function refresh(full=true){try{if(full)await loadCore();await render()}catch(e){renderError(e)}}
 function navigate(view){state.view=RENDER[view]?view:'overview';window.location.hash='#/'+state.view;$('#sidebar').classList.remove('open');$('#mobileOverlay').hidden=true;$('#menuToggle').setAttribute('aria-expanded','false');state.findingPage=1;render();window.scrollTo({top:0,behavior:'instant'})}
-async function changeDataset(did){state.did=did;storage.set('localStorage','mdf-dataset',did);state.activeFilters={kind:'',status:''};state.samplePage=1;state.findingPage=1;state.sampleFilter='';state.counterSampleId=null;state.samples=null;state.findings=null;state.graph=null;state.rankings=null;state.baselineReadiness=null;await refresh(true);toast('Research dataset selected.');}
+async function changeDataset(did){state.did=did;storage.set('localStorage','mdf-dataset',did);state.activeFilters={kind:'',status:''};state.samplePage=1;state.findingPage=1;state.sampleFilter='';state.counterSampleId=null;state.samples=null;state.findings=null;state.graph=null;state.rankings=null;state.baselineReadiness=null;state.graphUi={search:'',severity:'all',links:'all',zoom:1};state.failureCell='';await refresh(true);toast('Research dataset selected.');}
 function drawGraph(graph){
  const box=$('#nodeGraph');if(!box)return;
- const allNodes=Array.isArray(graph.nodes)?graph.nodes:[];
- const allEdges=Array.isArray(graph.edges)?graph.edges:[];
- const findingIds=new Set(allEdges.map(edge=>edge.source));
- const candidates=allNodes.filter(node=>node.type==='finding'&&findingIds.has(node.id)).slice(0,10);
- const selectedFindingIds=new Set(candidates.map(node=>node.id));
- const linkedIds=new Set(allEdges.filter(edge=>selectedFindingIds.has(edge.source)).map(edge=>edge.target));
- const connectedSamples=allNodes.filter(node=>node.type==='sample'&&linkedIds.has(node.id)).slice(0,18);
- const connected=Boolean(candidates.length&&connectedSamples.length);
- // No inferred relationships: in inventory mode show only isolated sample/finding nodes.
- const findings=connected?candidates:allNodes.filter(node=>node.type==='finding').slice(0,10);
- const samples=connected?connectedSamples:allNodes.filter(node=>node.type==='sample').slice(0,12);
- const nodes=[...samples,...findings];
- if(!nodes.length){box.innerHTML='<p class="fine graph-empty-note" role="status">No image or evidence nodes were returned. Import images or run an audit.</p>';return;}
- const width=950,height=Math.max(340,Math.max(findings.length,samples.length)*66+95);
- const pos={};
- const place=(items,x)=>items.forEach((node,index)=>{
-  pos[node.id]={x,y:52+(index+.5)*(height-110)/Math.max(1,items.length)};
- });
- place(samples,210);place(findings,720);
- const connections=connected?allEdges.filter(edge=>pos[edge.source]&&pos[edge.target]):[];
- const paths=connections.map(edge=>{
-  const left=pos[edge.target],right=pos[edge.source];
-  return `<path d="M${left.x+112},${left.y} C${left.x+280},${left.y} ${right.x-280},${right.y} ${right.x-112},${right.y}" fill="none" stroke="var(--teal)" stroke-opacity=".8" stroke-width="2.5"/>`;
+ const visible=graphVisibleData(graph);
+ const connectedIds=new Set(visible.edges.flatMap(e=>[e.source,e.target]));
+ const findings=visible.nodes.filter(n=>n.type==='finding'&&connectedIds.has(n.id)).slice(0,14);
+ const findingIds=new Set(findings.map(n=>n.id));
+ const linkedSampleIds=new Set(visible.edges.filter(e=>findingIds.has(e.source)).map(e=>e.target));
+ const selectedSamples=visible.nodes.filter(n=>n.type==='sample'&&linkedSampleIds.has(n.id)).slice(0,28);
+ const otherFindings=visible.nodes.filter(n=>n.type==='finding'&&!connectedIds.has(n.id));
+ const otherSamples=visible.nodes.filter(n=>n.type==='sample'&&!connectedIds.has(n.id));
+ const roomFindings=14-findings.length,roomSamples=28-selectedSamples.length;
+ const shownFindings=findings.concat(otherFindings.slice(0,Math.max(0,roomFindings)));
+ const shownSamples=selectedSamples.concat(otherSamples.slice(0,Math.max(0,roomSamples)));
+ const chosen=new Set([...shownFindings,...shownSamples].map(n=>n.id));
+ const displayedEdges=visible.edges.filter(e=>chosen.has(e.source)&&chosen.has(e.target));
+ const nodes=[...shownSamples,...shownFindings];
+ if(!nodes.length){
+  box.innerHTML='<p class="fine graph-empty-note" role="status">No records match these filters.</p>';return;
+ }
+ const baseWidth=950,baseHeight=Math.max(340,Math.max(shownFindings.length,shownSamples.length)*68+96);
+ const zoom=Math.min(1.5,Math.max(0.75,Number(state.graphUi?.zoom)||1));
+ const position={};
+ const place=(items,x)=>items.forEach((node,index)=>{position[node.id]={x,y:52+(index+.5)*(baseHeight-110)/Math.max(1,items.length)}});
+ place(shownSamples,210);place(shownFindings,720);
+ const edges=displayedEdges.map(edge=>{
+   const left=position[edge.target],right=position[edge.source];
+   if(!left||!right)return '';
+   return '<path d="M'+(left.x+112)+','+left.y+' C'+(left.x+270)+','+left.y+' '+(right.x-270)+','+right.y+
+    ' '+(right.x-112)+','+right.y+'" fill="none" stroke="var(--teal)" stroke-opacity=".8" stroke-width="2.5"/>';
  }).join('');
  const cards=nodes.map(node=>{
-  const p=pos[node.id],isFinding=node.type==='finding';
-  const label=String(node.label||'Unnamed record');
-  const shown=label.length>30?label.slice(0,29)+'…':label;
-  const sub=isFinding?String(node.status||'suspected').toUpperCase():String(node.split||'image').toUpperCase();
-  return `<g tabindex="0" role="button" data-node="${esc(node.id)}" aria-label="Inspect ${esc(label)}" class="graph-card" transform="translate(${p.x-112},${p.y-24})"><rect width="224" height="48" rx="9" class="graph-card-bg ${isFinding?'graph-card-finding':''}"/><rect width="5" height="30" x="11" y="9" rx="2.5" fill="${isFinding?'#4779b6':'#237568'}"/><text class="graph-label" x="23" y="21">${esc(shown)}</text><text class="graph-caption" x="23" y="36">${esc(sub)}</text><title>${esc(label)}</title></g>`;
+   const p=position[node.id],finding=node.type==='finding',label=String(node.label||'Unnamed record');
+   const shown=label.length>30?label.slice(0,29)+'…':label;
+   const sub=finding?String(node.severity||node.status||'suspected').toUpperCase():String(node.split||'image').toUpperCase();
+   return '<g tabindex="0" role="button" data-node="'+esc(node.id)+'" aria-label="Inspect '+esc(label)+
+   '" class="graph-card" transform="translate('+(p.x-112)+','+(p.y-24)+')"><rect width="224" height="48" rx="9" class="graph-card-bg '+
+   (finding?'graph-card-finding':'')+'"/><rect width="5" height="30" x="11" y="9" rx="2.5" fill="'+
+   (finding?'#4779b6':'#237568')+'"/><text class="graph-label" x="23" y="21">'+esc(shown)+
+   '</text><text class="graph-caption" x="23" y="36">'+esc(sub)+'</text><title>'+esc(label)+'</title></g>';
  }).join('');
- box.innerHTML=`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="group" aria-label="${connected?'Detector-linked findings and source image records':'Actual source image and finding nodes with no confirmed evidence links'}"><title>${connected?'Forensic evidence connections':'Unlinked research image records'}</title><text x="100" y="24" class="graph-col-title">SOURCE IMAGE RECORDS</text><text x="610" y="24" class="graph-col-title">${connected?'FORENSIC FINDINGS':'FINDINGS / NO LINKS'}</text><g>${paths}</g><g>${cards}</g></svg>`;
+ box.innerHTML='<svg xmlns="http://www.w3.org/2000/svg" width="'+Math.round(baseWidth*zoom)+'" height="'+
+   Math.round(baseHeight*zoom)+'" viewBox="0 0 '+baseWidth+' '+baseHeight+
+   '" role="group" aria-label="Actual forensic evidence connections and isolated records"><title>Evidence map</title>'+
+   '<text x="100" y="24" class="graph-col-title">SOURCE IMAGE RECORDS</text>'+
+   '<text x="610" y="24" class="graph-col-title">FORENSIC FINDINGS</text><g>'+edges+'</g><g>'+cards+'</g></svg>';
  box.querySelectorAll('[data-node]').forEach(el=>{
   const open=()=>{const id=el.dataset.node;if(id.startsWith('f:'))openFinding(id.slice(2));else if(id.startsWith('s:'))openSample(id.slice(2))};
   el.addEventListener('click',open);
@@ -541,10 +666,15 @@ async function openImport(){
 async function openDemo(){openModal('Generate synthetic research sandbox',`<p class="fine" style="margin-bottom:18px">Creates geometric phantoms, not medical images. Known label flips, exact copies, near copies and group overlaps are injected so detectors can be sanity-tested.</p><div class="field-group"><div class="field"><label for="demoCount">Number of base patterns</label><input class="input" id="demoCount" type="number" min="40" max="1200" value="128"></div><div class="field"><label for="demoSeed">Generation seed</label><input class="input" id="demoSeed" type="number" min="1" max="999999" value="42"></div></div><div class="actions">${btn(icon('plus')+' Create training sandbox','create-demo','btn-primary')}</div>`)}
 async function createDemo(){const button=document.querySelector('[data-action="create-demo"]');if(button)button.disabled=true;const returnTo=state.view;try{const out=await api('/api/datasets/demo',{method:'POST',body:JSON.stringify({count:Number($('#demoCount').value),seed:Number($('#demoSeed').value)})});closeModal();state.did=out.dataset_id;storage.set('localStorage','mdf-dataset',out.dataset_id);await refresh(true);navigate(returnTo==='overview'?'dna':returnTo);toast('Created an entirely synthetic, local research sandbox.')}catch(e){toast(e.message,true);if(button)button.disabled=false}}
 async function showExperiment(id){try{const e=await api('/api/experiments/'+id);openModal('Experiment manifest · '+title(e.kind),`<p class="fine">${esc(e.status)} · Research record ${esc(e.id)}</p><div class="scope-label" style="margin-top:18px">EXPERIMENT CONFIGURATION</div><div class="mono-box">${esc(JSON.stringify(e.config,null,2))}</div><div class="scope-label" style="margin-top:18px">RECORDED RESULT</div><div class="mono-box">${esc(JSON.stringify(e.result,null,2))}</div>`)}catch(e){toast(e.message,true)}}
-async function handleAction(action){switch(action){case 'import':return openImport();case 'demo':return openDemo();case 'create-demo':return createDemo();case 'run-audit':return startAudit();case 'jobs':return openJobs();case 'jobs-history':return openJobs(true);case 'clear-job-notifications':return clearJobNotifications();case 'refresh':return refresh(true);case 'rankings':{state.rankingBudget=Number($('#rankingBudget')?.value||4);const target=$('#rankingResult');if(target)target.innerHTML='<div class="rank-pending" role="status">Comparing real candidate order…</div>';state.rankings=await api('/api/datasets/'+state.did+'/rankings?budget='+state.rankingBudget);if(target)target.innerHTML=renderRankings();return;}case 'filter-findings':state.activeFilters={kind:$('#findingKind')?.value||'',status:$('#findingStatus')?.value||''};state.findingPage=1;return render();case 'filter-samples':state.sampleFilter=`&split=${encodeURIComponent($('#dnaSplit').value)}&label=${encodeURIComponent($('#dnaLabel').value)}&search=${encodeURIComponent($('#dnaSearch').value)}`;state.samplePage=1;return render();case 'go-audit':return navigate('audit');case 'go-privacy':return navigate('privacy');case 'baseline-launch':return launchExperiment('baseline',{seed:42});case 'shortcut':return launchExperiment('shortcut',{seed:42});case 'impact':return launchExperiment('impact',{seed:42});case 'counterfactual-launch':{const sid=$('#counterSample')?.value;if(!sid)return toast('Select a research image first',true);return launchExperiment('counterfactual',{sample_id:sid,strength:Number($('#counterfactualAmount')?.value||40)/100})}case 'cross-launch':{const did=$('#crossTarget')?.value;if(!did)return toast('Select a target dataset first',true);return launchExperiment('cross_dataset',{target_dataset_id:did})}case 'scenario-launch':return launchExperiment('scenario',{seed:Number($('#scenarioSeed').value),label_flip_rate:Number($('#scenarioRate').value)});case 'verify-integrity':{if(!state.did)return toast('Select a dataset first',true);try{const info=await api('/api/datasets/'+state.did+'/verify');const target=$('#integrityResults');if(target)target.innerHTML=`<div class="notice ${info.passed?'':'warning'}" style="margin-top:12px"><strong>${info.passed?'Integrity check passed':'Integrity check found issues'}</strong><p>Files checked: ${number(info.checked_files)} · Problems: ${number(info.problem_count)}</p><p class="fine">${esc((info.problems||[]).slice(0,5).map(p=>p.kind+': '+(p.sample_id||'manifest')).join('; ') || 'No recorded mismatches.')}</p></div>`;}catch(e){toast(e.message,true)}return;}case 'download-json':window.location.href='/api/datasets/'+state.did+'/report?format=json';return;case 'auth-prompt':openModal('Local access token',`<div class="field"><label for="authToken">MDF_ACCESS_TOKEN</label><input class="input" type="password" id="authToken" placeholder="Enter configured token"></div>${btn('Authenticate','save-token','btn-primary')}`);return;case 'save-token':storage.set('sessionStorage','mdf-token',$('#authToken').value);await api('/api/session',{method:'POST'});toast('Authenticated for this local session');return;default:toast('Unknown control: '+action,true)}}
+async function handleAction(action){switch(action){case 'import':return openImport();case 'demo':return openDemo();case 'create-demo':return createDemo();case 'run-audit':return startAudit();case 'jobs':return openJobs();case 'jobs-history':return openJobs(true);case 'clear-job-notifications':return clearJobNotifications();case 'refresh':return refresh(true);case 'graph-zoom-in':state.graphUi.zoom=Math.min(1.5,Math.round((state.graphUi.zoom+0.25)*100)/100);return updateGraphExplorer();
+ case 'graph-zoom-out':state.graphUi.zoom=Math.max(0.75,Math.round((state.graphUi.zoom-0.25)*100)/100);return updateGraphExplorer();
+ case 'graph-reset':state.graphUi={search:'',severity:'all',links:'all',zoom:1};$('#main').innerHTML=renderGraph();drawGraph(state.graph);return;
+ case 'failure-reset':state.failureCell='';return updateFailureExplorer();
+ case 'rankings':{state.rankingBudget=Number($('#rankingBudget')?.value||4);const target=$('#rankingResult');if(target)target.innerHTML='<div class="rank-pending" role="status">Comparing real candidate order…</div>';state.rankings=await api('/api/datasets/'+state.did+'/rankings?budget='+state.rankingBudget);if(target)target.innerHTML=renderRankings();return;}case 'filter-findings':state.activeFilters={kind:$('#findingKind')?.value||'',status:$('#findingStatus')?.value||''};state.findingPage=1;return render();case 'filter-samples':state.sampleFilter=`&split=${encodeURIComponent($('#dnaSplit').value)}&label=${encodeURIComponent($('#dnaLabel').value)}&search=${encodeURIComponent($('#dnaSearch').value)}`;state.samplePage=1;return render();case 'go-audit':return navigate('audit');case 'go-privacy':return navigate('privacy');case 'baseline-launch':return launchExperiment('baseline',{seed:42});case 'shortcut':return launchExperiment('shortcut',{seed:42});case 'impact':return launchExperiment('impact',{seed:42});case 'counterfactual-launch':{const sid=$('#counterSample')?.value;if(!sid)return toast('Select a research image first',true);return launchExperiment('counterfactual',{sample_id:sid,strength:Number($('#counterfactualAmount')?.value||40)/100})}case 'cross-launch':{const did=$('#crossTarget')?.value;if(!did)return toast('Select a target dataset first',true);return launchExperiment('cross_dataset',{target_dataset_id:did})}case 'scenario-launch':return launchExperiment('scenario',{seed:Number($('#scenarioSeed').value),label_flip_rate:Number($('#scenarioRate').value)});case 'verify-integrity':{if(!state.did)return toast('Select a dataset first',true);try{const info=await api('/api/datasets/'+state.did+'/verify');const target=$('#integrityResults');if(target)target.innerHTML=`<div class="notice ${info.passed?'':'warning'}" style="margin-top:12px"><strong>${info.passed?'Integrity check passed':'Integrity check found issues'}</strong><p>Files checked: ${number(info.checked_files)} · Problems: ${number(info.problem_count)}</p><p class="fine">${esc((info.problems||[]).slice(0,5).map(p=>p.kind+': '+(p.sample_id||'manifest')).join('; ') || 'No recorded mismatches.')}</p></div>`;}catch(e){toast(e.message,true)}return;}case 'download-json':window.location.href='/api/datasets/'+state.did+'/report?format=json';return;case 'auth-prompt':openModal('Local access token',`<div class="field"><label for="authToken">MDF_ACCESS_TOKEN</label><input class="input" type="password" id="authToken" placeholder="Enter configured token"></div>${btn('Authenticate','save-token','btn-primary')}`);return;case 'save-token':storage.set('sessionStorage','mdf-token',$('#authToken').value);await api('/api/session',{method:'POST'});toast('Authenticated for this local session');return;default:toast('Unknown control: '+action,true)}}
 document.addEventListener('click',async e=>{
  const nav=e.target.closest('[data-view]');if(nav){navigate(nav.dataset.view);return}
  const act=e.target.closest('[data-action]');if(act){act.disabled=true;try{await handleAction(act.dataset.action)}catch(err){toast(err.message,true)}finally{if(act.isConnected)act.disabled=false}return}
+ const matrix=e.target.closest('[data-confusion]');if(matrix){state.failureCell=matrix.dataset.confusion;updateFailureExplorer();return}
  const dataset=e.target.closest('[data-dataset]');if(dataset){changeDataset(dataset.dataset.dataset);return}
  const f=e.target.closest('[data-finding]');if(f){openFinding(f.dataset.finding);return}
  const s=e.target.closest('[data-sample]');if(s){openSample(s.dataset.sample);return}
@@ -560,8 +690,13 @@ const storedTheme=storage.get('localStorage','mdf-theme');if(storedTheme==='dark
 $('#importTrigger').addEventListener('click',openImport);$('#jobsTrigger').addEventListener('click',()=>openJobs());$('#modalClose').addEventListener('click',closeModal);
 $('#modalBackdrop').addEventListener('click',e=>{if(e.target===$('#modalBackdrop'))closeModal()});
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();if(e.key==='Tab'&&!$('#modalBackdrop').hidden){const focusable=[...$('#modal').querySelectorAll('button:not([disabled]),a[href],input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex="0"]')];if(focusable.length){const first=focusable[0],last=focusable[focusable.length-1];if(e.shiftKey&&document.activeElement===first){last.focus();e.preventDefault()}else if(!e.shiftKey&&document.activeElement===last){first.focus();e.preventDefault()}}}});
-document.addEventListener('input',e=>{if(e.target.id==='counterfactualAmount')updateCounterfactualPreview()});
-document.addEventListener('change',e=>{if(e.target.id==='counterfactualMode')updateCounterfactualPreview();if(e.target.id==='counterSample'){const sample=state.samples?.items?.find(s=>s.id===e.target.value);if(sample){state.counterSampleId=sample.id;for(const id of ['counterOriginalImage','counterModifiedImage']){const el=$('#'+id);if(el)el.src=sample.image_url}updateCounterfactualPreview()}}});
+document.addEventListener('input',e=>{if(e.target.id==='counterfactualAmount')updateCounterfactualPreview();
+ if(e.target.id==='graphSearch'){state.graphUi.search=e.target.value;updateGraphExplorer()}
+});
+document.addEventListener('change',e=>{
+ if(e.target.id==='graphSeverity'){state.graphUi.severity=e.target.value;updateGraphExplorer()}
+ if(e.target.id==='graphLinks'){state.graphUi.links=e.target.value;updateGraphExplorer()}
+ if(e.target.id==='counterfactualMode')updateCounterfactualPreview();if(e.target.id==='counterSample'){const sample=state.samples?.items?.find(s=>s.id===e.target.value);if(sample){state.counterSampleId=sample.id;for(const id of ['counterOriginalImage','counterModifiedImage']){const el=$('#'+id);if(el)el.src=sample.image_url}updateCounterfactualPreview()}}});
 $('#datasetSelect').addEventListener('change',e=>changeDataset(e.target.value));
 $('#menuToggle').addEventListener('click',()=>{$('#sidebar').classList.toggle('open');const opened=$('#sidebar').classList.contains('open');$('#mobileOverlay').hidden=!opened;$('#menuToggle').setAttribute('aria-expanded',String(opened))});
 $('#mobileOverlay').addEventListener('click',()=>{$('#sidebar').classList.remove('open');$('#mobileOverlay').hidden=true;$('#menuToggle').setAttribute('aria-expanded','false')});
