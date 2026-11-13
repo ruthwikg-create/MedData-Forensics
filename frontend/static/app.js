@@ -69,6 +69,120 @@ function uploadResearchDataset(formData,onProgress,onPhase){return new Promise((
  xhr.send(formData);
 });}
 
+/** Chunked uploads use disk-backed 8 MiB blocks; no large browser-side buffers. */
+async function uploadLargeResearchDataset(files,options,onProgress,onIndex){
+ const started=await api('/api/datasets/import-large',{method:'POST',
+  body:JSON.stringify({...options,files:files.map(f=>({name:f.name,size:f.size}))})});
+ const sid=encodeURIComponent(started.id),size=started.chunk_bytes;
+ if(!Number.isInteger(size)||size<1||size>8*1024*1024)throw Error('Invalid upload chunk size from server');
+ const progress=()=>api('/api/datasets/import-large/'+sid);
+ for(let i=0;i<files.length;i++){
+  const file=files[i];let offset=0;
+  while(offset<file.size){
+   const end=Math.min(file.size,offset+size);
+   let status=null;
+   for(let attempt=0;attempt<3;attempt++){
+    try{
+     const headers={'Content-Type':'application/octet-stream'};
+     const token=storage.get('sessionStorage','mdf-token');
+     if(token)headers['X-MDF-Token']=token;
+     const response=await fetch('/api/datasets/import-large/'+sid+'/files/'+i+'?offset='+offset,
+      {method:'PUT',headers,body:file.slice(offset,end)});
+     const payload=await response.json().catch(()=>({}));
+     if(!response.ok)throw Error(typeof payload.detail==='string'?payload.detail:'Chunk rejected: '+response.status);
+     status=payload;break;
+    }catch(error){
+     const saved=await progress().catch(()=>null);
+     if(saved?.files?.[i]?.received>offset){status=saved;break}
+     if(attempt===2)throw Error('Upload failed for '+file.name+': '+error.message);
+    }
+   }
+   const received=status?.files?.[i]?.received;
+   if(!Number.isInteger(received)||received<=offset||received>file.size)
+    throw Error('Inconsistent uploaded byte count');
+   offset=received;
+   onProgress(Math.round(100*status.received_bytes/status.total_bytes));
+  }
+ }
+ await api('/api/datasets/import-large/'+sid+'/process',{method:'POST'});
+ onIndex({phase:'queued',processed:0,total_images:0,message:'Awaiting indexing'});
+ while(true){
+  await new Promise(resolve=>setTimeout(resolve,1000));
+  const status=await progress();
+  if(status.phase==='completed'&&status.dataset_id)
+   return {dataset_id:status.dataset_id,message:status.message};
+  if(status.phase==='failed')throw Error(status.error||status.message||'Import failed');
+  onIndex(status);
+ }
+}
+
+async function openLargeImport(){
+ const body='<p class="fine">Large ZIP import uses 8 MiB sequential chunks stored locally, with real upload and indexing progress. Select all the necessary files at once; no cloud storage or paid API.</p>'+
+  '<p class="import-instructions"><strong>HAM10000:</strong> Select <code>HAM10000_metadata.csv</code>, <code>HAM10000_images_part_1.zip</code> and <code>HAM10000_images_part_2.zip</code> together. Without metadata, images cannot be assigned labels. The generated lesion-grouped split is exploratory, not patient-independent validation or an official benchmark.</p>'+
+  '<form id="largeImportForm"><div class="field"><label for="largeImportFiles">ZIP image archive(s) and metadata CSV</label>'+
+  '<input id="largeImportFiles" class="input" type="file" accept=".zip,.csv" multiple required>'+
+  '<small id="largeImportSummary" role="status" aria-live="polite">Choose the complete set of ZIP + CSV files (up to 8 GiB per file / 12 GiB combined).</small></div>'+
+  '<div class="field"><label for="largeImportName">Dataset name</label><input id="largeImportName" class="input" type="text" minlength="2" maxlength="200" value="HAM10000" required></div>'+
+  '<div class="field-group"><div class="field"><label for="largeImportSource">Dataset source</label><input id="largeImportSource" class="input" type="text" value="HAM10000 / Harvard Dataverse"></div>'+
+  '<div class="field"><label for="largeImportLicense">License and authorized use</label><input id="largeImportLicense" class="input" type="text" value="Verify original dataset non-commercial terms"></div></div>'+
+  '<section class="import-tracker" id="largeImportTracker" hidden><div class="import-tracker-head"><span id="largeImportPhase">Preparing files</span><strong id="largeImportPercent">0%</strong></div>'+
+  '<progress id="largeImportProgress" max="100" value="0" aria-label="Large dataset import progress"></progress>'+
+  '<p id="largeImportMessage" role="status" aria-live="polite">Select files to begin.</p>'+
+  '<p class="fine">During indexing, progress reflects actual processed image records. The local server must remain running. No estimated completion time is invented.</p></section>'+
+  '<div class="actions"><button type="submit" class="btn btn-primary" id="largeImportStart">Import large dataset</button></div></form>';
+ openModal('Import large dataset',body);
+ const filesInput=$('#largeImportFiles');
+ filesInput.addEventListener('change',()=>{
+  const files=[...filesInput.files];
+  const mib=files.reduce((sum,f)=>sum+f.size,0)/1024/1024;
+  $('#largeImportSummary').textContent=files.length+' file(s) · '+mib.toFixed(1)+' MiB total. '+files.map(f=>f.name).join(', ');
+ });
+ $('#largeImportForm').addEventListener('submit',async event=>{
+  event.preventDefault();if(datasetImportInProgress)return;
+  const files=[...filesInput.files];
+  if(!files.length)return;
+  const names=files.map(f=>f.name.toLowerCase());
+  const ham=names.some(n=>/^ham10000_images_part_?[12]\.zip$/.test(n));
+  const hasFirst=names.some(n=>/^ham10000_images_part_?1\.zip$/.test(n));
+  const hasSecond=names.some(n=>/^ham10000_images_part_?2\.zip$/.test(n));
+  const tracker=$('#largeImportTracker'),phase=$('#largeImportPhase'),percent=$('#largeImportPercent');
+  const bar=$('#largeImportProgress'),message=$('#largeImportMessage'),button=$('#largeImportStart');
+  tracker.hidden=false;tracker.classList.remove('import-error','import-complete');
+  const errorText=text=>{tracker.classList.add('import-error');phase.textContent='Missing or unsupported files';message.textContent=text};
+  if(ham&&(!hasFirst||!hasSecond||!names.includes('ham10000_metadata.csv'))){
+   errorText('For HAM10000, select HAM10000_metadata.csv and both image ZIP parts in the same selection.');return;
+  }
+  if(files.length>6||files.some(f=>f.size>8*1024**3)||files.reduce((n,f)=>n+f.size,0)>12*1024**3){
+   errorText('Safety limits: at most 6 files, 8 GiB per file, 12 GiB total.');return;
+  }
+  const options={name:$('#largeImportName').value.trim(),source:$('#largeImportSource').value.trim(),
+   license:$('#largeImportLicense').value.trim(),modality:'Biomedical 2D image'};
+  datasetImportInProgress=true;button.disabled=true;$('#modalClose').disabled=true;filesInput.disabled=true;
+  phase.textContent='Uploading files';message.textContent='Sending verified chunks to local disk…';
+  try{
+   const result=await uploadLargeResearchDataset(files,options,
+    n=>{bar.value=n;percent.textContent=n+'%'},
+    info=>{
+     const total=Number(info.total_images||0),done=Number(info.processed||0);
+     phase.textContent='Validating and indexing';
+     bar.value=total?Math.round(100*done/total):0;
+     percent.textContent=total?Math.round(100*done/total)+'%':'Processing';
+     message.textContent=total?'Indexed '+done.toLocaleString()+' / '+total.toLocaleString()+' images.':info.message;
+    });
+   datasetImportInProgress=false;$('#modalClose').disabled=false;
+   state.did=result.dataset_id;storage.set('localStorage','mdf-dataset',state.did);
+   closeModal();await refresh(true);await navigate('dna');
+   toast('Large dataset imported successfully. Verify Dataset DNA and split provenance.');
+  }catch(error){
+   datasetImportInProgress=false;$('#modalClose').disabled=false;filesInput.disabled=false;button.disabled=false;
+   tracker.classList.add('import-error');phase.textContent='Import failed';
+   message.textContent=error.message||String(error);
+   toast('Large dataset import failed. See the message in the dialog.',true);
+  }
+ });
+}
+
+
 function empty(name,desc,action=''){return `<div class="empty-state"><div class="empty-icon">${icon('database')}</div><h3>${esc(name)}</h3><p>${esc(desc)}</p>${action}</div>`;}
 function pill(text,type=''){return `<span class="pill ${type}">${esc(text)}</span>`;}
 function head(eyebrow,name,description,actions=''){return `<header class="page-head"><div><div class="eyebrow">${esc(eyebrow)}</div><h1>${esc(name)}</h1><p class="subtitle">${esc(description)}</p></div><div class="page-actions">${actions}</div></header>`;}
@@ -643,7 +757,7 @@ async function openJobs(showHistory=false){
  }catch(error){toast(error.message,true);}
 }
 async function openImport(){
- const html=`<p class="fine" style="margin-bottom:20px">Upload an authorized dataset to this computer. NPZ files up to 256 MiB support MedMNIST train/val/test arrays; ZIP files up to 150 MiB require a root-level samples.csv with sample_id, image_path, label and split columns. No cloud transfer.</p>
+ const html=`<p class="fine" style="margin-bottom:16px">Upload an authorized dataset to this computer. NPZ files up to 256 MiB support MedMNIST train/val/test arrays; ZIP files up to 150 MiB require a root-level samples.csv with sample_id, image_path, label and split columns. Larger ZIPs and multipart datasets use the separate disk-backed uploader. No cloud transfer.</p><div class="import-large-entry">${btn(icon('upload')+' Import large ZIP or HAM10000','large-import','btn-teal')}<p class="fine">For HAM10000, choose both image ZIP parts and HAM10000_metadata.csv. Single-part archives cannot be indexed with labels.</p></div>
  <form id="importForm"><div id="importFields"><div class="field"><label for="fileUpload">Dataset file (.npz or .zip)</label><input class="input" id="fileUpload" type="file" accept=".npz,.zip" required></div>
  <div class="field"><label for="datasetName">Dataset name</label><input class="input" id="datasetName" required minlength="2" maxlength="200" placeholder="e.g. DermaMNIST"></div>
  <div class="field-group"><div class="field"><label for="datasetSource">Source / provenance</label><input class="input" id="datasetSource" value="MedMNIST / Zenodo"></div><div class="field"><label for="datasetLicense">License / authorization</label><input class="input" id="datasetLicense" value="Verify dataset provider terms"></div></div>
@@ -671,7 +785,7 @@ async function openImport(){
    $('#importMilestoneDone').className=done?'done':'';
   };
   const limitMiB=uploadLimitMiB(f.name);
-  if(f.size>limitMiB*1024*1024){status.hidden=false;phase.textContent='File too large';pct.textContent='';stamp(`${f.name} is ${(f.size/(1024*1024)).toFixed(1)} MiB and exceeds the ${limitMiB} MiB ${f.name.toLowerCase().endsWith('.npz')?'NPZ':'ZIP'} limit. Selecting fewer images per split does not reduce the original upload size.`);status.classList.add('import-error');return;}
+  if(f.size>limitMiB*1024*1024){status.hidden=false;phase.textContent='Use the large dataset importer';pct.textContent='';stamp(`${f.name} is ${(f.size/(1024*1024)).toFixed(1)} MiB. ZIP files over 150 MiB need the large dataset uploader and their matching metadata CSV. Use the button above to select all dataset parts together. NPZ files remain limited to 256 MiB.`);status.classList.add('import-error');return;}
   const b=new FormData(); // Inputs use IDs, so populate the upload payload explicitly.
   b.append('file',f);b.append('name',$('#datasetName').value);b.append('source',$('#datasetSource').value);b.append('license',$('#datasetLicense').value);b.append('max_per_split',$('#maxImages').value);
   datasetImportInProgress=true;status.hidden=false;status.classList.remove('import-error','import-complete');
@@ -705,7 +819,7 @@ async function openImport(){
 async function openDemo(){openModal('Generate synthetic research sandbox',`<p class="fine" style="margin-bottom:18px">Creates geometric phantoms, not medical images. Known label flips, exact copies, near copies and group overlaps are injected so detectors can be sanity-tested.</p><div class="field-group"><div class="field"><label for="demoCount">Number of base patterns</label><input class="input" id="demoCount" type="number" min="40" max="1200" value="128"></div><div class="field"><label for="demoSeed">Generation seed</label><input class="input" id="demoSeed" type="number" min="1" max="999999" value="42"></div></div><div class="actions">${btn(icon('plus')+' Create training sandbox','create-demo','btn-primary')}</div>`)}
 async function createDemo(){const button=document.querySelector('[data-action="create-demo"]');if(button)button.disabled=true;const returnTo=state.view;try{const out=await api('/api/datasets/demo',{method:'POST',body:JSON.stringify({count:Number($('#demoCount').value),seed:Number($('#demoSeed').value)})});closeModal();state.did=out.dataset_id;storage.set('localStorage','mdf-dataset',out.dataset_id);await refresh(true);navigate(returnTo==='overview'?'dna':returnTo);toast('Created an entirely synthetic, local research sandbox.')}catch(e){toast(e.message,true);if(button)button.disabled=false}}
 async function showExperiment(id){try{const e=await api('/api/experiments/'+id);openModal('Experiment manifest · '+title(e.kind),`<p class="fine">${esc(e.status)} · Research record ${esc(e.id)}</p><div class="scope-label" style="margin-top:18px">EXPERIMENT CONFIGURATION</div><div class="mono-box">${esc(JSON.stringify(e.config,null,2))}</div><div class="scope-label" style="margin-top:18px">RECORDED RESULT</div><div class="mono-box">${esc(JSON.stringify(e.result,null,2))}</div>`)}catch(e){toast(e.message,true)}}
-async function handleAction(action){switch(action){case 'import':return openImport();case 'demo':return openDemo();case 'create-demo':return createDemo();case 'run-audit':return startAudit();case 'jobs':return openJobs();case 'jobs-history':return openJobs(true);case 'clear-job-notifications':return clearJobNotifications();case 'refresh':return refresh(true);case 'graph-zoom-in':state.graphUi.zoom=Math.min(1.5,Math.round((state.graphUi.zoom+0.25)*100)/100);return updateGraphExplorer();
+async function handleAction(action){switch(action){case 'import':return openImport();case 'large-import':return openLargeImport();case 'demo':return openDemo();case 'create-demo':return createDemo();case 'run-audit':return startAudit();case 'jobs':return openJobs();case 'jobs-history':return openJobs(true);case 'clear-job-notifications':return clearJobNotifications();case 'refresh':return refresh(true);case 'graph-zoom-in':state.graphUi.zoom=Math.min(1.5,Math.round((state.graphUi.zoom+0.25)*100)/100);return updateGraphExplorer();
  case 'graph-zoom-out':state.graphUi.zoom=Math.max(0.75,Math.round((state.graphUi.zoom-0.25)*100)/100);return updateGraphExplorer();
  case 'graph-reset':state.graphUi={search:'',severity:'all',links:'all',zoom:1};$('#main').innerHTML=renderGraph();drawGraph(state.graph);return;
  case 'failure-reset':state.failureCell='';return updateFailureExplorer();
