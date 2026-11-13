@@ -516,6 +516,8 @@ def create_experiment(did:str,payload:ExperimentInput):
             if not target or not target['selectable']:
                 detail=' '.join(target['reasons']) if target else 'Choose a second dataset that is already imported.'
                 raise HTTPException(422,'Cross-Dataset Lab cannot start: '+detail)
+            if payload.config.get('independence_confirmed') is not True:
+                raise HTTPException(422,'Confirm from the dataset provenance that the target is independently collected and is not a subset, resize, augmentation or re-export of the source.')
             if target['mapping_eligible']:
                 mapping=payload.config.get('target_label_mapping')
                 source_labels=set(readiness['source']['training_labels'])
