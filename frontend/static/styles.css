@@ -248,3 +248,36 @@
 .baseline-last-error{border-left:3px solid var(--red);padding:12px 14px;background:var(--surface);border-radius:6px;font-size:13px;overflow-wrap:anywhere}
 .baseline-last-error p{margin:6px 0 0}
 @media(max-width:550px){.baseline-readiness-top{align-items:flex-start;flex-direction:column}}
+
+
+/* Evidence explorer controls — restrained Ink & Mineral design tokens.
+   Keyboard, touch and reduced-motion use the same fully functional controls. */
+.graph-workbench{min-width:0}
+.graph-toolbar{display:grid;grid-template-columns:minmax(190px,2fr) minmax(136px,1fr) minmax(155px,1fr) auto auto;align-items:end;gap:12px;margin:16px 0 20px}
+.graph-field{display:flex;min-width:0;flex-direction:column;gap:7px;font-size:12px;color:var(--ink);font-weight:650}
+.graph-field .input,.graph-field .select{width:100%;min-width:0;min-height:44px;font-size:14px}
+.graph-zoom-controls{display:flex;flex-direction:column;gap:7px;min-width:132px}
+.graph-zoom-label{font-size:12px;font-weight:650;color:var(--ink)}
+.graph-zoom-buttons{display:flex;align-items:center;gap:6px}
+.graph-zoom-buttons .btn{min-width:40px;min-height:44px;justify-content:center;font-size:18px}
+.graph-zoom-buttons output{font-size:12px;min-width:42px;text-align:center;font-variant-numeric:tabular-nums}
+.graph-reset-btn{min-height:44px;white-space:nowrap}
+.graph-results-count{margin:4px 0 13px;color:var(--ink);font-weight:650;font-size:13px}
+.graph-workbench .node-graph{min-height:300px;max-height:580px;overflow:auto;background:var(--surface)}
+.graph-workbench .node-graph svg{width:auto;max-width:none;min-width:0;height:auto}
+.graph-canvas-footnote{line-height:1.65;padding-top:11px}
+.graph-result-index{margin-top:19px}
+.graph-result-index h4{font-size:14px;margin-bottom:11px}
+.graph-result-index .graph-finding-index{grid-template-columns:repeat(2,minmax(0,1fr))}
+.graph-result-index .graph-list-item{min-height:51px}
+.graph-result-index .graph-list-item strong{display:block;font-size:13px;line-height:1.5}
+.graph-result-index .graph-list-item small{display:block;margin-top:4px;color:var(--muted);font-size:12px}
+.graph-empty-results{border:1px dashed var(--border-strong);background:var(--surface);border-radius:12px;padding:24px;display:grid;gap:10px;justify-items:start}
+.graph-empty-results strong{font-size:15px}
+.graph-empty-results p{color:var(--muted);font-size:13px}
+.graph-toolbar :focus-visible,.graph-workbench button:focus-visible{outline:3px solid var(--teal);outline-offset:2px}
+.graph-workbench .graph-card:focus-visible .graph-card-bg{stroke:var(--teal);stroke-width:3}
+@media(max-width:1120px){.graph-toolbar{grid-template-columns:minmax(190px,2fr) repeat(2,minmax(130px,1fr))}.graph-zoom-controls,.graph-reset-btn{grid-row:2}}
+@media(max-width:720px){.graph-toolbar{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.graph-search{grid-column:1/-1}.graph-reset-btn,.graph-zoom-controls{grid-row:auto}.graph-result-index .graph-finding-index{grid-template-columns:1fr}}
+@media(max-width:390px){.graph-toolbar{grid-template-columns:minmax(0,1fr)}.graph-search{grid-column:auto}.graph-zoom-controls{min-width:0}}
+@media(prefers-reduced-motion:reduce){.graph-workbench *{scroll-behavior:auto;transition:none}}
