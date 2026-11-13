@@ -501,7 +501,7 @@ document.addEventListener('click',async e=>{
 });
 $('#themeToggle').addEventListener('click',()=>{const theme=document.documentElement.dataset.theme==='dark'?'light':'dark';document.documentElement.dataset.theme=theme;storage.set('localStorage','mdf-theme',theme);$('#themeToggle').setAttribute('aria-label',theme==='dark'?'Switch to light mode':'Switch to dark mode')});
 const storedTheme=storage.get('localStorage','mdf-theme');if(storedTheme==='dark'){document.documentElement.dataset.theme='dark';$('#themeToggle').setAttribute('aria-label','Switch to light mode')}
-$('#importTrigger').addEventListener('click',openImport);$('#jobsTrigger').addEventListener('click',openJobs);$('#modalClose').addEventListener('click',closeModal);
+$('#importTrigger').addEventListener('click',openImport);$('#jobsTrigger').addEventListener('click',()=>openJobs());$('#modalClose').addEventListener('click',closeModal);
 $('#modalBackdrop').addEventListener('click',e=>{if(e.target===$('#modalBackdrop'))closeModal()});
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();if(e.key==='Tab'&&!$('#modalBackdrop').hidden){const focusable=[...$('#modal').querySelectorAll('button:not([disabled]),a[href],input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex="0"]')];if(focusable.length){const first=focusable[0],last=focusable[focusable.length-1];if(e.shiftKey&&document.activeElement===first){last.focus();e.preventDefault()}else if(!e.shiftKey&&document.activeElement===last){first.focus();e.preventDefault()}}}});
 document.addEventListener('input',e=>{if(e.target.id==='counterfactualAmount')updateCounterfactualPreview()});
