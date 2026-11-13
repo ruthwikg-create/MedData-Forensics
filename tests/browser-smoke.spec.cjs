@@ -130,7 +130,16 @@ test('Cross-Dataset, Impact and Reproducibility work through their real UI contr
   reviewer:'Browser QA','decision':'confirmed',
   notes:'Confirmed for the synthetic workflow test after inspecting linked evidence.'}});
  expect(review.ok(),await review.text()).toBeTruthy();
+ const impactReadyResponse=await request.get('/api/datasets/'+impact+'/impact-readiness');
+ expect(impactReadyResponse.ok()).toBeTruthy();
+ const impactReady=await impactReadyResponse.json();
+ expect(impactReady.audit_completed).toBe(true);
+ expect(impactReady.confirmed_training_samples).toBeGreaterThan(0);
+ expect(impactReady.ready,JSON.stringify(impactReady.reasons)).toBe(true);
 
+ // The dataset was created through the API after the SPA had already loaded.
+ // Reload so the active-dataset selector includes the new test collection.
+ await page.reload();
  await page.goto('/#/impact');
  await page.locator('#datasetSelect').selectOption(impact);
  await expect(page.getByText('Ready to run')).toBeVisible();
