@@ -1,6 +1,6 @@
 """Strict local-path and upload checks. No cloud or external calls."""
 from pathlib import Path
-import hashlib, os, secrets
+import hashlib, ipaddress, os, secrets, threading, time
 from PIL import Image, UnidentifiedImageError
 from .db import DATA_ROOT
 
@@ -43,15 +43,78 @@ def manifest_hash(rows):
         h.update(f'{x.sample_id}|{x.label}|{x.split}|{x.group_id}|{x.sha256}\n'.encode())
     return h.hexdigest()
 
-def extract_auth(request):
-    # Local workstation only; optional secret for LAN access. Bind 127.0.0.1 by default.
-    token=os.getenv('MDF_ACCESS_TOKEN','')
-    # Never allow unauthenticated access when explicitly binding beyond loopback.
-    # The local single-user workflow remains passwordless on 127.0.0.1.
-    host=os.getenv('MDF_HOST','127.0.0.1').strip().lower()
-    if not token and host not in ('127.0.0.1','localhost','::1'):
+# An opaque bearer credential is stored in the browser cookie, never the
+# workstation-wide MDF_ACCESS_TOKEN. The session registry is deliberately
+# process-local: restarting the single-user server revokes all browser sessions.
+SESSION_SECONDS = 8 * 3600
+_MAX_SESSIONS = 128
+_sessions = {}
+_session_lock = threading.Lock()
+
+
+def loopback_host(host):
+    host = str(host or '').strip().lower().strip('[]')
+    if host == 'localhost':
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
         return False
-    if token:
-        candidate=request.headers.get('X-MDF-Token','') or request.cookies.get('mdf_access','')
-        if not secrets.compare_digest(candidate,token): return False
-    return True
+
+
+def _local_request(request):
+    # Even if uvicorn was launched manually with --host 0.0.0.0, do not
+    # silently authorize remote peers when there is no configured secret.
+    if not loopback_host(os.getenv('MDF_HOST', '127.0.0.1')):
+        return False
+    peer = request.client.host if request.client else ''
+    if peer == 'testclient':  # Starlette's in-process TestClient, never a TCP IP.
+        return True
+    try:
+        return ipaddress.ip_address(peer.split('%', 1)[0]).is_loopback
+    except ValueError:
+        return False
+
+
+def _valid_session(cookie):
+    if not cookie:
+        return False
+    with _session_lock:
+        expiry = _sessions.get(cookie)
+        if expiry is None:
+            return False
+        if expiry <= time.monotonic():
+            _sessions.pop(cookie, None)
+            return False
+        return True
+
+
+def new_session():
+    with _session_lock:
+        current = time.monotonic()
+        for key, expiry in list(_sessions.items()):
+            if expiry <= current:
+                _sessions.pop(key, None)
+        # Bound memory if an authenticated client repeatedly creates sessions.
+        while len(_sessions) >= _MAX_SESSIONS:
+            _sessions.pop(next(iter(_sessions)))
+        identifier = secrets.token_urlsafe(32)
+        _sessions[identifier] = current + SESSION_SECONDS
+        return identifier
+
+
+def revoke_session(cookie):
+    with _session_lock:
+        _sessions.pop(cookie, None)
+
+
+def valid_master_token(candidate):
+    expected = os.getenv('MDF_ACCESS_TOKEN', '')
+    return bool(expected and candidate and secrets.compare_digest(candidate, expected))
+
+
+def extract_auth(request):
+    token = os.getenv('MDF_ACCESS_TOKEN', '')
+    if not token:
+        return _local_request(request)
+    return valid_master_token(request.headers.get('X-MDF-Token', '')) or _valid_session(request.cookies.get('mdf_access', ''))
