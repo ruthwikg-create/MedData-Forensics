@@ -24,12 +24,19 @@ that option for ZIP archives larger than 150 MiB or datasets whose metadata CSV
 is supplied outside the ZIP. The existing quick importer is still suitable
 for MedMNIST NPZ files up to 256 MiB and small self-contained ZIP+samples.csv.
 
-For the original HAM10000 release, place these three authorized, unmodified
-files in the same folder and select them together using Ctrl+click:
+For the original HAM10000 release, select these three authorized, unmodified
+files. Use **Choose Files** repeatedly to add each ZIP or CSV from any folder; the
+previous choices stay in the queue. You can also select multiple files together
+using Ctrl+click in the Windows picker:
 
 - `HAM10000_images_part_1.zip`
 - `HAM10000_images_part_2.zip`
 - `HAM10000_metadata.csv`
+
+
+The dialog shows **Still needed** until the complete set is selected. Removing a
+queued file does not delete the original. The **Import large dataset** button
+is disabled until the required ZIP/CSV set is present.
 
 The source metadata supplies image_id, dx, and lesion_id. The importer matches
 *every* metadata row against the selected archives before storing any
