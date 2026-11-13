@@ -312,3 +312,12 @@ button.cm-cell small{font-size:11px;color:var(--ink);font-weight:650}
 .chart-bar .bar-val{font-size:13px}
 @media(max-width:550px){.chart-bar{grid-template-columns:minmax(68px,1fr) minmax(60px,2fr) 48px;gap:8px}}
 @media(prefers-reduced-motion:reduce){.chart-bar{transition:none}}
+
+/* Evidence explorer: clear keyboard focus and reduced-motion states. */
+.graph-toolbar select:focus-visible,.graph-toolbar input:focus-visible,
+.graph-card:focus-visible{outline:3px solid var(--blue);outline-offset:3px}
+.graph-card{cursor:pointer}
+.graph-card-bg{transition:stroke .16s ease,filter .16s ease}
+.graph-card:hover .graph-card-bg,.graph-card:focus-visible .graph-card-bg{stroke:var(--blue);stroke-width:2;filter:drop-shadow(0 2px 4px rgba(24,40,47,.13))}
+.node-graph{overscroll-behavior-inline:contain}
+@media (prefers-reduced-motion:reduce){.graph-card-bg{transition:none}}
