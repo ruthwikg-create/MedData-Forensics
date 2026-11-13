@@ -383,3 +383,84 @@ test('Impact Simulator shows evidence prerequisites and prior failure instead of
  assert.ok(html.includes('Eligible evidence types'));
  assert.ok(!html.includes('Baseline macro-F1'));
 });
+
+test('Cross-Dataset Lab exposes an explicit one-to-one label mapping when vocabularies differ',()=>{
+ const html=vm.runInContext(`
+  state.did='source';state.detail={dataset:{id:'source',name:'Source'},experiments:[
+   {kind:'baseline',status:'completed',checkpoint_available:true}
+  ]};
+  state.crossReadiness={source:{training_labels:['akiec','bcc','mel']},baseline_ready:true,
+   targets:[{id:'target',name:'Target numeric labels',sample_count:90,modality:'Dermatoscopic images',
+    labels:['0','1','2'],test_count:20,compatible:false,mapping_eligible:true,
+    label_mapping_required:true,selectable:true,reasons:[]}]};
+  renderCross()
+ `,ctx);
+ assert.ok(html.includes('Needs explicit mapping'));
+ assert.ok(html.includes('data-target-map="target"'));
+ assert.ok(html.includes('data-target-label="0"'));
+ assert.ok(html.includes('value="akiec"'));
+ assert.ok(html.includes('data-target-map-confirm'));
+ assert.ok(html.includes('data-action="cross-launch"'));
+});
+
+test('Failure Explorer disables baseline training when preflight blockers exist',()=>{
+ const html=vm.runInContext(`
+  state.detail={dataset:{id:'d',name:'Small data'},experiments:[]};
+  state.baselineReadiness={ready:false,train_count:10,test_count:0,training_class_counts:{a:10},
+   reasons:['At least 20 decodable training images are needed.'],warnings:[],last_attempt:null};
+  renderFailures()
+ `,ctx);
+ assert.ok(html.includes('Resolve prerequisites first'));
+ assert.ok(html.includes('disabled aria-disabled="true"'));
+ assert.ok(html.includes('At least 20 decodable training images are needed.'));
+ assert.ok(!html.includes('data-action="baseline-launch"'));
+ assert.ok(html.includes('data-action="go-dna"'));
+});
+
+test('Reproducibility offers an immediate bundle export and file verification without requiring prior experiments',()=>{
+ const html=vm.runInContext(`
+  state.detail={dataset:{id:'d',name:'Research data',manifest_hash:'abc123',synthetic:false},experiments:[]};
+  renderRepro()
+ `,ctx);
+ assert.ok(html.includes('data-action="download-repro"'));
+ assert.ok(html.includes('data-action="verify-integrity"'));
+ assert.ok(html.includes('You can verify hashes and export a reproducibility bundle immediately.'));
+ assert.ok(html.includes('No experiment records'));
+ assert.ok(html.includes('format=repro'));
+});
+
+test('both importers require and persist a specific imaging modality',()=>{
+ assert.ok(source.includes('id="datasetModality" required'));
+ assert.ok(source.includes('id="largeImportModality" class="select" required'));
+ assert.ok(source.includes("b.append('modality',$('#datasetModality').value)"));
+ assert.ok(source.includes("modality:$('#largeImportModality').value"));
+ assert.ok(source.includes('Other / unspecified (not eligible for cross-dataset comparison)'));
+ assert.ok(source.includes("startButton.disabled=!check.ready||!$('#largeImportModality')?.value"));
+});
+
+test('Cross-Dataset requires an explicit independent-source attestation',()=>{
+ const html=vm.runInContext(`
+  state.did='s';state.detail={dataset:{id:'s',name:'Source'},experiments:[
+   {kind:'baseline',status:'completed',checkpoint_available:true}
+  ]};
+  state.crossReadiness={source:{training_labels:['a','b']},baseline_ready:true,
+   targets:[{id:'t',name:'Target',sample_count:40,modality:'Synthetic geometry (NOT medical images)',
+    labels:['a','b'],compatible:true,selectable:true,reasons:[]}]};
+  renderCross()
+ `,ctx);
+ assert.ok(html.includes('id="crossIndependenceConfirm"'));
+ assert.ok(html.includes('not a subset, resize, augmentation or re-export'));
+});
+
+test('Dataset DNA lets users correct old generic modality declarations with documentation',()=>{
+ const html=vm.runInContext(`
+  state.detail={dataset:{id:'d',name:'Old import',source:'MedMNIST',modality:'Other / unspecified',
+    license:'Check terms',manifest_hash:'abc',synthetic:false,sample_count:40},experiments:[]};
+  state.dna={splits:{train:20,val:10,test:10},labels:{a:20,b:20},sites:{unknown:40},image_shapes:{'28x28':40},lineage:[],group_coverage:{with_group_id:0}};
+  state.samples={items:[],count:0};renderDNA()
+ `,ctx);
+ assert.ok(html.includes('data-action="confirm-modality"'));
+ assert.ok(html.includes('Confirm / correct modality'));
+ assert.ok(source.includes("api('/api/datasets/'+state.did+'/modality'"));
+ assert.ok(source.includes('modalityAttestationConfirm'));
+});

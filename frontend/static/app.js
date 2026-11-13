@@ -170,6 +170,7 @@ async function openLargeImport(){
   '<ul id="largeImportFileQueue" class="large-import-file-queue" aria-label="Files selected for import"></ul>'+ 
   '<p id="largeImportMissing" class="fine" role="status" aria-live="polite">Add the matching ZIP images and metadata CSV before starting.</p></div>'+
   '<div class="field"><label for="largeImportName">Dataset name</label><input id="largeImportName" class="input" type="text" minlength="2" maxlength="200" value="HAM10000" required></div>'+
+  '<div class="field"><label for="largeImportModality">Imaging modality</label><select id="largeImportModality" class="select" required><option value="">Choose the actual imaging modality</option><option value="Dermatoscopic / skin lesion images">Dermatoscopic / skin lesion images</option><option value="Histopathology / microscopy">Histopathology / microscopy</option><option value="Radiology / X-ray">Radiology / X-ray</option><option value="Ultrasound">Ultrasound</option><option value="MRI">MRI</option><option value="CT">CT</option><option value="Fundus / retinal images">Fundus / retinal images</option><option value="Other / unspecified">Other / unspecified (not eligible for cross-dataset comparison)</option></select><small>HAM10000 uses dermatoscopic skin-lesion images. Verify modality for any different collection.</small></div>'+
   '<div class="field-group"><div class="field"><label for="largeImportSource">Dataset source</label><input id="largeImportSource" class="input" type="text" value="HAM10000 / Harvard Dataverse"></div>'+
   '<div class="field"><label for="largeImportLicense">License and authorized use</label><input id="largeImportLicense" class="input" type="text" value="Verify original dataset non-commercial terms"></div></div>'+
   '<section class="import-tracker" id="largeImportTracker" hidden><div class="import-tracker-head"><span id="largeImportPhase">Preparing files</span><strong id="largeImportPercent">0%</strong></div>'+
@@ -196,14 +197,15 @@ async function openLargeImport(){
   missingEl.textContent=check.errors.length?'Fix file selection: '+check.errors.join('; '):
     check.ready?'All required files selected. You can start the import.':
     'Still needed: '+check.missing.join(', ')+'.';
-  startButton.disabled=!check.ready;
+  startButton.disabled=!check.ready||!$('#largeImportModality')?.value;
  };
  const previous=storage.get('localStorage','mdf-large-upload-session');
  $('#largeImportResumeSection').hidden=!previous;
  let resume=false;
  $('#largeImportResume').addEventListener('click',()=>{
   resume=true;
-  // Resume may only need the persisted server-side indexing state.
+  // The server-side session already retains its original modality and file metadata.
+  if(!$('#largeImportModality').value)$('#largeImportModality').value='Other / unspecified';
   startButton.disabled=false;
   $('#largeImportForm').requestSubmit();
   if(!datasetImportInProgress)renderFileQueue();
@@ -229,6 +231,7 @@ async function openLargeImport(){
    renderFileQueue();
   }
  });
+ $('#largeImportModality').addEventListener('change',renderFileQueue);
  renderFileQueue();
  $('#largeImportForm').addEventListener('submit',async event=>{
   event.preventDefault();if(datasetImportInProgress)return;
@@ -245,7 +248,7 @@ async function openLargeImport(){
    errorText([...selection.errors,...selection.missing.map(name=>'Missing '+name)].join('; '));return;
   }
   const options={name:$('#largeImportName').value.trim(),source:$('#largeImportSource').value.trim(),
-   license:$('#largeImportLicense').value.trim(),modality:'Biomedical 2D image'};
+   license:$('#largeImportLicense').value.trim(),modality:$('#largeImportModality').value};
   datasetImportInProgress=true;button.disabled=true;$('#modalClose').disabled=true;filesInput.disabled=true;
   phase.textContent='Uploading files';message.textContent='Sending verified chunks to local disk…';
   try{
@@ -368,7 +371,7 @@ function renderDNA(){if(!state.detail)return head('DATASET LIBRARY','Dataset DNA
  const d=state.detail.dataset;const dna=state.dna||{};
  let html=head('DATASET INTELLIGENCE','Dataset DNA','Trace how a research dataset was sourced, structured, versioned and prepared for analysis.',btn(icon('upload')+' Import another dataset','import'));
  html+=notice('A matching lesion ID does not establish matching patient identity. Interpret provenance only as documented by the original dataset provider.');
- html+=`<div class="two-col equal">${card('Dataset identity',`<dl>${[['Dataset',d.name],['Source',d.source],['Modality',d.modality],['Usage terms',d.license],['Manifest SHA-256',d.manifest_hash],['Type',d.synthetic?'Synthetic training images':'External research images']].map(([k,v])=>`<div class="kv"><dt>${esc(k)}</dt><dd class="${k.includes('SHA')?'mono':''}">${esc(v)}</dd></div>`).join('')}</dl>`)}${card('Data structure',`<div class="section-heading">Split distribution</div>${bars(dna.splits,0,'split')}<div class="rule"></div><div class="section-heading">Recorded labels</div>${bars(dna.labels,0,'label')}`)}</div>`;
+ html+=`<div class="two-col equal">${card('Dataset identity',`<dl>${[['Dataset',d.name],['Source',d.source],['Modality',d.modality],['Usage terms',d.license],['Manifest SHA-256',d.manifest_hash],['Type',d.synthetic?'Synthetic training images':'External research images']].map(([k,v])=>`<div class="kv"><dt>${esc(k)}</dt><dd class="${k.includes('SHA')?'mono':''}">${esc(v)}</dd></div>`).join('')}</dl><div class="actions">${btn('Confirm / correct modality','confirm-modality','btn')}</div><p class="fine">Provide the original dataset documentation reference. This records your declaration; it does not inspect or alter image content.</p>`)}${card('Data structure',`<div class="section-heading">Split distribution</div>${bars(dna.splits,0,'split')}<div class="rule"></div><div class="section-heading">Recorded labels</div>${bars(dna.labels,0,'label')}`)}</div>`;
  html+=`<div class="two-col">${card('Source and acquisition coverage',`<div class="section-heading">Source sites</div>${bars(dna.sites)}<div class="rule"></div><div class="section-heading">Image dimensions</div>${bars(dna.image_shapes)}<p class="fine" style="margin-top:18px">Group identifiers available for ${number(dna.group_coverage?.with_group_id)} of ${number(d.sample_count)} records.</p>`)}${card('Dataset lineage',`<div class="data-list">${(dna.lineage||[]).map((n,i)=>`<div class="data-row"><div><div class="row-label">${i===0?'Current version':'Parent version'}</div><div class="row-desc">${esc(n.name)}</div><div class="mono">${esc(short(n.manifest_hash))}</div></div>${pill('Immutable','green')}</div>`).join('')}</div><p class="fine" style="margin-top:14px">Version records preserve source manifests. Derived versions do not silently overwrite originals.</p>`)}</div>`;
  html+=`<section class="card card-padded"><div class="card-title"><h3>Sample explorer</h3><div>${btn(icon('filter')+' Refresh','refresh','btn-small')}</div></div><div class="filter-row"><select class="select" id="dnaSplit" aria-label="Sample split"><option value="">All splits</option>${['train','val','test'].map(x=>`<option value="${x}" ${state.dnaFilters.split===x?'selected':''}>${x}</option>`).join('')}</select><select class="select" id="dnaLabel" aria-label="Recorded label"><option value="">All labels</option>${Object.keys(dna.labels||{}).map(x=>`<option value="${esc(x)}" ${state.dnaFilters.label===x?'selected':''}>${esc(x)}</option>`).join('')}</select><input class="input" id="dnaSearch" value="${esc(state.dnaFilters.search)}" placeholder="Search sample identifier" aria-label="Search sample identifier"><button class="btn btn-small" data-action="filter-samples">Apply filters</button><button class="btn btn-small" data-action="clear-sample-filters">Clear filters</button></div><div class="record-grid" id="sampleGrid">${(state.samples?.items||[]).map(sampleCard).join('')}</div>${pager(state.samples?.count||0,state.samplePage,24,'sample')}</section>`;
  return html;
@@ -578,6 +581,8 @@ function renderCross(){
    '<option value="">Choose a compatible collection</option>'+
    eligible.map(target=>'<option value="'+esc(target.id)+'">'+esc(target.name)+' ('+number(target.sample_count)+' images)'+(target.mapping_eligible?' · mapping required':'')+'</option>').join('')+
   '</select><small>Only collections passing modality, test-split and duplicate preflight are selectable.</small></div>':'';
+ const independenceCheck=eligible.length?
+  '<label class="check-row cross-independence-check"><input type="checkbox" id="crossIndependenceConfirm"> I verified from the source documentation that the target is independently collected, not a subset, resize, augmentation or re-export of the source dataset.</label>':'';
  const mappingPanels=eligible.filter(target=>target.mapping_eligible).map(target=>
   '<div class="cross-label-mapping" data-target-map="'+esc(target.id)+'" hidden>'+
    '<h4>Explicit one-to-one class mapping</h4>'+
@@ -601,8 +606,10 @@ function renderCross(){
     '<p>Other datasets are loaded, but none passes the technical compatibility checks. The reasons are listed below. Do not bypass modality, duplicate or test-split checks.</p>'+
     '<div class="actions">'+btn('Import another dataset','import','btn-primary')+
     btn('Create two synthetic collections to test this lab','cross-demo-pair','btn')+'</div></div>':'')+
+   independenceCheck+
    mappingPanels+
    (candidateRows?'<div class="lab-target-list" aria-label="Dataset compatibility results">'+candidateRows+'</div>':'')+
+   '<p class="fine">Hash checks cannot prove patient independence or detect every resized/reprocessed duplicate. Never use a source dataset and a resized subset derived from it as independent external validation. The independence declaration is stored with the experiment.</p>'+
    '<p class="fine">A user-supplied class mapping is recorded with the experiment. It does not prove clinical equivalence, matching populations or comparable acquisition protocols.</p>'+
    (state.detail.dataset.synthetic?notice('The selected source is synthetic geometry. Use this pair to test the software workflow only; it is not biomedical evidence.','warn'):'')+
    '</section>';
@@ -616,6 +623,7 @@ function renderImpact(){
  let {html,e}=labBase('INTERVENTION ANALYSIS','Audit Impact Simulator','Compare frozen-test performance before and after removing reviewer-confirmed training samples.','impact','Run removal-only ablation');
  if(!state.detail)return html;
  const r=state.impactReadiness||{ready:false,reasons:['Checking the evidence and training split…']};
+ if(state.detail.dataset?.synthetic)html+=notice('This is a synthetic geometry sandbox with deliberately planted software-test defects. Results here validate the workflow only; they are not biomedical evidence.','warn');
  if(!r.ready){
   const launchButton='<button type="button" class="btn btn-primary" data-action="impact">'+icon('play')+' Run removal-only ablation</button>';
   html=html.replace(launchButton,'<button type="button" class="btn btn-primary" disabled aria-disabled="true">'+icon('lock')+' Complete prerequisites first</button>');
@@ -642,7 +650,9 @@ function renderImpact(){
   next='<div class="impact-next-steps"><strong>What to do next</strong><ol>'+steps.map(step=>'<li>'+esc(step)+'</li>').join('')+'</ol><p class="fine">Eligible evidence types: split leakage, group overlap, exact/pixel/near duplicates and label suspicion. A confirmation is a reviewer decision, not proof of a medical label error.</p>'+
    '<div class="actions">'+(!r.audit_completed?btn(icon('play')+' Run forensic audit','run-audit','btn-primary'):'')+
    btn('Open Review Center','go-review','btn-primary')+
-   btn('Open Forensic Audit','go-audit','btn')+'</div></div>';
+   btn('Open Forensic Audit','go-audit','btn')+
+   btn('Create synthetic test dataset','demo','btn')+'</div>'+
+   '<p class="fine">The synthetic option creates a separate sandbox with known planted defects. You must still inspect and record your own review decisions; it does not auto-confirm findings.</p></div>';
  }else{
   next='<div class="impact-ready-note"><strong>Evidence prerequisites satisfied.</strong><p>'+number(r.confirmed_training_samples)+
    ' distinct training image(s) are eligible for a removal-only comparison. The source dataset and held-out test records will remain unchanged.</p></div>';
@@ -714,10 +724,22 @@ function updateFailureExplorer(){
   button.classList.toggle('is-selected',pressed);
  });
 }
-function renderFailures(){let html=head('PERFORMANCE INVESTIGATION','Model Failure Explorer','Inspect prediction mistakes, confusion matrices, uncertainty and performance across recorded source groups.',btn(icon('play')+' Run baseline','baseline-launch','btn-primary'));
+function renderFailures(){
+ const readiness=state.baselineReadiness;
+ const trainButton=readiness?.ready===false?
+  '<button type="button" class="btn btn-primary" disabled aria-disabled="true">'+icon('lock')+' Resolve prerequisites first</button>':
+  btn(icon('play')+' Train / retry baseline','baseline-launch','btn-primary');
+ let html=head('PERFORMANCE INVESTIGATION','Model Failure Explorer','Inspect prediction mistakes, confusion matrices, uncertainty and performance across recorded source groups.',trainButton);
  if(!state.detail)return html+needDataset();
  html+=baselineReadinessPanel();
- const e=bestExp('baseline');if(!e){const failed=state.detail?.experiments?.some(x=>x.kind==='baseline'&&x.status==='failed');return html+(failed?notice('The last baseline model failed. Open Analysis Jobs to read the error, then select Run baseline to retry after updating the software.','warn'):'')+empty('No completed model evaluation yet','Train the CPU baseline to examine test-split misclassifications. For failed attempts, use Analysis Jobs to review the exact error.',btn('Train baseline model','baseline-launch','btn-primary')+' '+btn('View failed jobs','jobs'));}
+ const e=bestExp('baseline');if(!e){
+  const failed=state.detail?.experiments?.some(x=>x.kind==='baseline'&&x.status==='failed');
+  const action=readiness?.ready===false?
+   btn('Inspect dataset splits','go-dna','btn')+' '+btn('Create synthetic test dataset','demo','btn'):
+   btn('Train baseline model','baseline-launch','btn-primary')+' '+btn('Create synthetic test dataset','demo','btn');
+  return html+(failed?notice('The last baseline model failed. Open Analysis Jobs for its exact error. The readiness panel above shows whether another attempt can start.','warn'):'')+
+   empty('No completed model evaluation yet','A saved baseline checkpoint is required before prediction errors and the confusion matrix can be explored.',action+' '+btn('View analysis jobs','jobs','btn'));
+ }
  const r=e.result.test||{},m=r.metrics||{},errors=(r.predictions||[]).filter(x=>!x.correct);
  html+=notice('These are research-label disagreements from a lightweight model. Misclassification is not a verified clinical diagnosis error.');
  if(e.result.training_warnings?.length)html+=notice('Training cautions: '+e.result.training_warnings.join(' '),'warn');
@@ -730,9 +752,13 @@ function renderFailures(){let html=head('PERFORMANCE INVESTIGATION','Model Failu
  html+=renderFailureGallery(e);
  return html;
 }
-function renderRepro(){const d=state.detail?.dataset;let html=head('SCIENTIFIC TRACEABILITY','Reproducibility Engine','Reopen experiments, inspect immutable manifests and export transparent research audit records.',d?btn(icon('download')+' Export JSON report','download-json','btn-primary'):'');
+function renderRepro(){const d=state.detail?.dataset;let html=head('SCIENTIFIC TRACEABILITY','Reproducibility Engine','Inspect dataset fingerprints, verify source files and export traceable research records.',d?btn(icon('download')+' Download reproducibility bundle','download-repro','btn-primary')+' '+btn('Verify file hashes','verify-integrity','btn'):'');
  if(!d)return html+needDataset();
  const exps=state.detail.experiments||[];
+ const completed=exps.filter(item=>item.status==='completed').length,active=exps.filter(item=>['queued','running'].includes(item.status)).length,failed=exps.filter(item=>item.status==='failed').length;
+ html+=`<div class="stats-row">${stat('Recorded experiments',number(exps.length),'All statuses')}${stat('Completed',number(completed),'Available for inspection')}${stat('In progress',number(active),'Queued or running')}${stat('Failed',number(failed),'Details retained')}</div>`;
+ if(d.synthetic)html+=notice('This dataset is synthetic. Its manifests and exports are useful for testing reproducibility features, not for making biomedical claims.','warn');
+ html+=`<div class="info-stripe"><strong>How to use this page:</strong> You can verify hashes and export a reproducibility bundle immediately. The experiment registry fills as you complete baseline, audit and research-lab runs; it is not necessary to run every experiment before exporting.</div>`;
  html+=`<div class="two-col equal">${card('Dataset fingerprint',`<div class="eyebrow">SHA-256 MANIFEST</div><div class="mono-box">${esc(d.manifest_hash)}</div><p class="fine" style="margin-top:14px">Manifest fingerprints change when dataset membership or labels change. Source images remain unchanged in derived label scenarios.</p>`)}${card('Controlled scenario generator',`<p class="fine" style="margin-bottom:15px">Create a derived dataset version with seeded, known training-label corruption. Original images and labels remain unchanged.</p><div class="field-group"><div class="field"><label for="scenarioSeed">Fixed random seed</label><input class="input" id="scenarioSeed" type="number" value="42" min="1" max="999999"></div><div class="field"><label for="scenarioRate">Flip percentage</label><select class="select" id="scenarioRate"><option value="0.05">5%</option><option value="0.08" selected>8%</option><option value="0.12">12%</option></select></div></div>${btn(icon('play')+' Generate version','scenario-launch','btn-teal')}`)}</div>`;
  html+=`<section class="card card-padded section-gap"><div class="card-title"><h3>Source-file integrity check</h3>${pill('Read-only verification')}</div><p class="fine" style="margin-bottom:12px">Verify each local image against the SHA-256 stored at import and check the dataset version manifest. This does not verify medical labels, patient identity or licensing.</p>${btn(icon('shield')+' Verify dataset hashes','verify-integrity','btn-teal')}<div id="integrityResults" role="status" aria-live="polite"></div></section>`;
  html+=`<section class="card card-padded"><div class="card-title"><h3>Experiment registry</h3>${pill(number(exps.length)+' recorded')}</div>${exps.length?`<div class="table-wrap"><table class="tablesimple"><thead><tr><th>Experiment</th><th>Kind</th><th>Status</th><th>Created</th><th>Manifest</th></tr></thead><tbody>${exps.map(e=>`<tr><td class="mono">${esc(short(e.id))}</td><td>${esc(title(e.kind))}</td><td>${pill(e.status,e.status==='completed'?'green':e.status==='failed'?'red':'amber')}</td><td>${esc(String(e.created_at||'').split('T')[0])}</td><td><button type="button" class="btn btn-small" data-experiment-detail="${esc(e.id)}">Inspect</button></td></tr>`).join('')}</tbody></table></div>`:empty('No experiment records','Run the baseline or an audit laboratory to begin collecting reproducible evidence.')}</section>`;
@@ -961,10 +987,22 @@ async function openJobs(showHistory=false){
   openModal('Analysis jobs',renderJobInbox(rows,showHistory));
  }catch(error){toast(error.message,true);}
 }
+function openModalityConfirmation(){
+ const current=state.detail?.dataset?.modality||'Other / unspecified';
+ const options=['Dermatoscopic / skin lesion images','Histopathology / microscopy','Radiology / X-ray','Ultrasound','MRI','CT','Fundus / retinal images','Other / unspecified'];
+ const body='<p class="fine">Use the original dataset provider documentation to identify the acquisition modality. This updates dataset metadata only; it does not inspect the images, validate labels or change the source files.</p>'+
+  '<div class="field"><label for="confirmModality">Declared imaging modality</label><select id="confirmModality" class="select" required><option value="">Choose the documented modality</option>'+
+  options.map(value=>'<option value="'+esc(value)+'" '+(value===current?'selected':'')+'>'+esc(value)+'</option>').join('')+
+  '</select></div><div class="field"><label for="modalitySourceNote">Original documentation reference</label><input id="modalitySourceNote" class="input" minlength="8" maxlength="1000" placeholder="Dataset paper, official README, or provider documentation" required></div>'+
+  '<label class="check-row"><input type="checkbox" id="modalityAttestationConfirm"> I checked the selected modality against the original dataset documentation.</label>'+
+  '<div class="actions">'+btn('Save documented modality','save-modality','btn-primary')+'</div>';
+ openModal('Confirm dataset modality',body);
+}
 async function openImport(){
  const html=`<p class="fine" style="margin-bottom:16px">Upload an authorized dataset to this computer. NPZ files up to 256 MiB support MedMNIST train/val/test arrays; ZIP files up to 150 MiB require a root-level samples.csv with sample_id, image_path, label and split columns. Larger ZIPs and multipart datasets use the separate disk-backed uploader. No cloud transfer.</p><div class="import-large-entry">${btn(icon('upload')+' Import large ZIP or HAM10000','large-import','btn-teal')}<p class="fine">For HAM10000, choose both image ZIP parts and HAM10000_metadata.csv. Single-part archives cannot be indexed with labels.</p></div>
  <form id="importForm"><div id="importFields"><div class="field"><label for="fileUpload">Dataset file (.npz or .zip)</label><input class="input" id="fileUpload" type="file" accept=".npz,.zip" required></div>
  <div class="field"><label for="datasetName">Dataset name</label><input class="input" id="datasetName" required minlength="2" maxlength="200" placeholder="e.g. DermaMNIST"></div>
+ <div class="field"><label for="datasetModality">Imaging modality</label><select class="select" id="datasetModality" required><option value="">Choose the actual imaging modality</option><option value="Dermatoscopic / skin lesion images">Dermatoscopic / skin lesion images</option><option value="Histopathology / microscopy">Histopathology / microscopy</option><option value="Radiology / X-ray">Radiology / X-ray</option><option value="Ultrasound">Ultrasound</option><option value="MRI">MRI</option><option value="CT">CT</option><option value="Fundus / retinal images">Fundus / retinal images</option><option value="Other / unspecified">Other / unspecified (not eligible for cross-dataset comparison)</option></select><small>Choose the real acquisition modality, not just “2D image”. Cross-Dataset Lab blocks unspecified modalities.</small></div>
  <div class="field-group"><div class="field"><label for="datasetSource">Source / provenance</label><input class="input" id="datasetSource" value="MedMNIST / Zenodo"></div><div class="field"><label for="datasetLicense">License / authorization</label><input class="input" id="datasetLicense" value="Verify dataset provider terms"></div></div>
  <div class="field"><label for="maxImages">Maximum NPZ images per split</label><input class="input" id="maxImages" type="number" min="10" max="10000" value="500"><small>The import manifest records whether sampling occurred. On an Intel Iris Xe laptop, begin with 500 images per split.</small></div></div>
  <section class="import-tracker" id="importTracker" hidden aria-label="Import progress">
@@ -992,9 +1030,9 @@ async function openImport(){
   const limitMiB=uploadLimitMiB(f.name);
   if(f.size>limitMiB*1024*1024){status.hidden=false;phase.textContent='Use the large dataset importer';pct.textContent='';stamp(`${f.name} is ${(f.size/(1024*1024)).toFixed(1)} MiB. ZIP files over 150 MiB need the large dataset uploader and their matching metadata CSV. Use the button above to select all dataset parts together. NPZ files remain limited to 256 MiB.`);status.classList.add('import-error');return;}
   const b=new FormData(); // Inputs use IDs, so populate the upload payload explicitly.
-  b.append('file',f);b.append('name',$('#datasetName').value);b.append('source',$('#datasetSource').value);b.append('license',$('#datasetLicense').value);b.append('max_per_split',$('#maxImages').value);
+  b.append('file',f);b.append('name',$('#datasetName').value);b.append('source',$('#datasetSource').value);b.append('license',$('#datasetLicense').value);b.append('max_per_split',$('#maxImages').value);b.append('modality',$('#datasetModality').value);
   datasetImportInProgress=true;status.hidden=false;status.classList.remove('import-error','import-complete');
-  $('#importFields').querySelectorAll('input').forEach(el=>el.disabled=true);button.disabled=true;$('#modalClose').disabled=true;
+  $('#importFields').querySelectorAll('input,select').forEach(el=>el.disabled=true);button.disabled=true;$('#modalClose').disabled=true;
   buttonText.textContent='Import in progress';phase.textContent='Uploading dataset';pct.textContent='0%';bar.hidden=false;$('#importWorking').hidden=true;bar.value=0;stamp(`Uploading ${f.name} (${(f.size/(1024*1024)).toFixed(1)} MB) to the local server…`);mark('upload');
   const onProgress=(n)=>{bar.value=n;pct.textContent=n+'%';};
   const onPhase=(stage)=>{if(stage==='indexing'){
@@ -1023,8 +1061,26 @@ async function openImport(){
 }
 async function openDemo(){openModal('Generate synthetic research sandbox',`<p class="fine" style="margin-bottom:18px">Creates geometric phantoms, not medical images. Known label flips, exact copies, near copies and group overlaps are injected so detectors can be sanity-tested.</p><div class="field-group"><div class="field"><label for="demoCount">Number of base patterns</label><input class="input" id="demoCount" type="number" min="40" max="1200" value="128"></div><div class="field"><label for="demoSeed">Generation seed</label><input class="input" id="demoSeed" type="number" min="1" max="999999" value="42"></div></div><div class="actions">${btn(icon('plus')+' Create training sandbox','create-demo','btn-primary')}</div>`)}
 async function createDemo(){const button=document.querySelector('[data-action="create-demo"]');if(button)button.disabled=true;const returnTo=state.view;try{const out=await api('/api/datasets/demo',{method:'POST',body:JSON.stringify({count:Number($('#demoCount').value),seed:Number($('#demoSeed').value)})});closeModal();state.did=out.dataset_id;storage.set('localStorage','mdf-dataset',out.dataset_id);await refresh(true);navigate(returnTo==='overview'?'dna':returnTo);toast('Created an entirely synthetic, local research sandbox.')}catch(e){toast(e.message,true);if(button)button.disabled=false}}
+async function createCrossDemoPair(){
+ const button=document.querySelector('[data-action="cross-demo-pair"]');if(button)button.disabled=true;
+ try{
+  const seed=(Math.floor(Date.now()/1000)%800000)+1000;
+  const source=await api('/api/datasets/demo',{method:'POST',body:JSON.stringify({seed,count:128})});
+  const target=await api('/api/datasets/demo',{method:'POST',body:JSON.stringify({seed:seed+1,count:128})});
+  state.did=source.dataset_id;storage.set('localStorage','mdf-dataset',source.dataset_id);
+  await refresh(true);await navigate('cross');
+  toast('Created two separate synthetic collections. Train the source baseline, then select the target. No medical images were generated.');
+ }catch(error){toast(error.message,true);if(button)button.disabled=false}
+}
 async function showExperiment(id){try{const e=await api('/api/experiments/'+id);openModal('Experiment manifest · '+title(e.kind),`<p class="fine">${esc(e.status)} · Research record ${esc(e.id)}</p><div class="scope-label" style="margin-top:18px">EXPERIMENT CONFIGURATION</div><div class="mono-box">${esc(JSON.stringify(e.config,null,2))}</div><div class="scope-label" style="margin-top:18px">RECORDED RESULT</div><div class="mono-box">${esc(JSON.stringify(e.result,null,2))}</div>`)}catch(e){toast(e.message,true)}}
-async function handleAction(action){switch(action){case 'import':return openImport();case 'large-import':return openLargeImport();case 'demo':return openDemo();case 'create-demo':return createDemo();case 'run-audit':return startAudit();case 'jobs':return openJobs();case 'jobs-history':return openJobs(true);case 'clear-job-notifications':return clearJobNotifications();case 'refresh':return refresh(true);case 'graph-zoom-in':state.graphUi.zoom=Math.min(1.5,Math.round((state.graphUi.zoom+0.25)*100)/100);return updateGraphExplorer();
+async function handleAction(action){switch(action){case 'import':return openImport();case 'large-import':return openLargeImport();case 'demo':return openDemo();case 'create-demo':return createDemo();case 'cross-demo-pair':return createCrossDemoPair();case 'confirm-modality':return openModalityConfirmation();case 'save-modality':{
+ const modality=$('#confirmModality')?.value,note=$('#modalitySourceNote')?.value?.trim();
+ if(!modality)return toast('Choose the documented imaging modality.',true);
+ if(!note||note.length<8)return toast('Enter the original dataset documentation reference.',true);
+ if(!$('#modalityAttestationConfirm')?.checked)return toast('Confirm that you checked the modality against the source documentation.',true);
+ await api('/api/datasets/'+state.did+'/modality',{method:'PATCH',body:JSON.stringify({modality,source_documentation:note,confirmed:true})});
+ closeModal();await refresh(true);await navigate('dna');toast('Documented modality saved. Cross-Dataset readiness has been refreshed.');return;
+}case 'run-audit':return startAudit();case 'jobs':return openJobs();case 'jobs-history':return openJobs(true);case 'clear-job-notifications':return clearJobNotifications();case 'refresh':return refresh(true);case 'graph-zoom-in':state.graphUi.zoom=Math.min(1.5,Math.round((state.graphUi.zoom+0.25)*100)/100);return updateGraphExplorer();
  case 'graph-zoom-out':state.graphUi.zoom=Math.max(0.75,Math.round((state.graphUi.zoom-0.25)*100)/100);return updateGraphExplorer();
  case 'graph-reset':state.graphUi={search:'',severity:'all',links:'all',zoom:1};$('#main').innerHTML=renderGraph();drawGraph(state.graph);return;
  case 'failure-reset':state.failureCell='';return updateFailureExplorer();
@@ -1033,6 +1089,8 @@ async function handleAction(action){switch(action){case 'import':return openImpo
  const targetId=$('#crossTarget')?.value;if(!targetId)return toast('Select a target dataset first',true);
  const target=state.crossReadiness?.targets?.find(item=>item.id===targetId);
  const config={target_dataset_id:targetId};
+ if(!$('#crossIndependenceConfirm')?.checked)return toast('Confirm that the target is independently collected and is not derived from the source dataset.',true);
+ config.independence_confirmed=true;
  if(target?.mapping_eligible){
   const panel=[...document.querySelectorAll('[data-target-map]')].find(item=>item.dataset.targetMap===targetId);
   if(!panel)return toast('The label-mapping panel is missing. Reload this workspace and try again.',true);

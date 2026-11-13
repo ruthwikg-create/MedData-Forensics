@@ -20,7 +20,7 @@ from contextlib import ExitStack
 from pathlib import Path, PurePosixPath
 
 from .db import DATA_ROOT, Session, Sample, jd
-from .ingest import _dataset, import_npz
+from .ingest import _dataset, import_npz, SUPPORTED_MODALITIES
 from .security import ALLOWED_EXT, MAX_IMAGE_BYTES, image_info, manifest_hash, sha_file
 
 CHUNK_BYTES = 8 * 1024 * 1024
@@ -365,7 +365,7 @@ def process_session(session_id):
         if len(state['files']) == 1 and state['files'][0]['name'].lower().endswith('.npz'):
             index_path = _directory(session_id) / '0.upload'
             dataset_id = import_npz(index_path, state['name'], state['source'],
-                                    state['license'], state['max_per_split'])
+                                    state['license'], state['max_per_split'], state['modality'])
         else:
             dataset_id = _index_zip_collection(session_id, state)
         _update(session_id, phase='completed', dataset_id=dataset_id,

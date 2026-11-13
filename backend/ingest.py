@@ -8,6 +8,12 @@ from sqlalchemy import select
 from .db import DATA_ROOT,Session,Dataset,Sample,uid,jd
 from .security import image_info,sha_file,safe_path,MAX_ARCHIVE_BYTES,MAX_NPZ_BYTES,ALLOWED_EXT,manifest_hash
 
+SUPPORTED_MODALITIES=frozenset({
+    'Dermatoscopic / skin lesion images','Histopathology / microscopy',
+    'Radiology / X-ray','Ultrasound','MRI','CT',
+    'Fundus / retinal images','Other / unspecified'
+})
+
 DEMO_LABELS=['pattern_a','pattern_b']  # explicitly synthetic and nonmedical
 
 def _dataset(name,source,license,modality,description,synthetic=False,metadata=None,parent_id=None):
@@ -83,7 +89,7 @@ def _stratified_subset_indices(labels, limit, seed=42):
     return np.sort(selected)
 
 
-def import_npz(path,name,source='MedMNIST',license='Check upstream source dataset license',max_samples_per_split=2000):
+def import_npz(path,name,source='MedMNIST',license='Check upstream source dataset license',max_samples_per_split=2000,modality='Other / unspecified'):
     """MedMNIST-compatible arrays only; bounded extraction, no pickle."""
     if max_samples_per_split<10 or max_samples_per_split>10000: raise ValueError('max_samples_per_split must be 10–10000')
     path=Path(path)
@@ -117,7 +123,7 @@ def import_npz(path,name,source='MedMNIST',license='Check upstream source datase
                           'evaluation_warning':'Class-preserving subset may not represent source prevalence; never report it as full-dataset evaluation.'}
             labels_seen.update(str(int(t)) for t in chosen_labels)
     with Session() as db:
-        d=_dataset(name,source,license,'Biomedical 2D image','MedMNIST-compatible NPZ import (bounded, no data downloaded automatically)',False,{'sampling':sizes,'subset':any(v['source_count']!=v['imported_count'] for v in sizes.values()),'label_ids':sorted(labels_seen)})
+        d=_dataset(name,source,license,modality,'MedMNIST-compatible NPZ import (bounded, no data downloaded automatically)',False,{'sampling':sizes,'subset':any(v['source_count']!=v['imported_count'] for v in sizes.values()),'label_ids':sorted(labels_seen)})
         db.add(d);db.flush()
         dest=DATA_ROOT/d.id/'images';dest.mkdir(parents=True,exist_ok=True)
         samples=[]
@@ -135,7 +141,7 @@ def import_npz(path,name,source='MedMNIST',license='Check upstream source datase
         db.add_all(samples);d.manifest_hash=manifest_hash(samples);db.commit()
         return d.id
 
-def import_zip(path,name,source='User-provided image/CSV package',license='Unspecified; verify authorization', modality='Biomedical 2D image'):
+def import_zip(path,name,source='User-provided image/CSV package',license='Unspecified; verify authorization', modality='Other / unspecified'):
     """ZIP must contain samples.csv and image files; strict traversal/size limits."""
     path=Path(path)
     if path.stat().st_size>MAX_ARCHIVE_BYTES:raise ValueError('ZIP upload exceeds 150MB limit')

@@ -48,6 +48,18 @@ Graph connections require a completed forensic audit and at least one detector-s
 A shortcut-sensitivity result uses the baseline's leakage-screened held-out test records. Cross-dataset experiments reject exact file duplicates and re-encoded pixel-identical content; neither screen alone establishes patient independence.
 
 
+
+## Using the four research workspaces
+
+**Import modality matters:** Choose the real acquisition type when importing a dataset. `Biomedical 2D image` and `Other / unspecified` are deliberately not accepted as evidence of modality compatibility. For example, choose `Dermatoscopic / skin lesion images` for HAM10000 and DermaMNIST, and `Histopathology / microscopy` for PathMNIST. Older collections imported with a generic modality can be corrected from Dataset DNA using **Confirm / correct modality**; provide the original documentation reference and confirm the declaration. This changes metadata only, not image files or labels. Do not relabel a dataset merely to bypass a compatibility check. **Important lineage restriction:** DermaMNIST is derived from HAM10000 and contains resized images from that source, so they must not be presented as independent external datasets for Cross-Dataset Lab. PathMNIST is histopathology and is not a modality-compatible target for HAM10000. Use the synthetic pair only to test the UI, or obtain a genuinely independent dermatoscopic collection with documented matching classes for a real external evaluation.
+
+
+- **Cross-Dataset Lab:** select a source dataset, train its baseline, and import a second independent dataset. Exact class names can be used directly. If class names differ but the class counts match, the mapping panel requires a documented one-to-one mapping and an explicit researcher confirmation. Modality mismatch, missing target test split, exact hashes or decoded-pixel duplicates still block the comparison. Use **Create two synthetic collections to test this lab** only to verify the software workflow; those collections are not biomedical data.
+- **Impact Simulator:** run a completed audit, open Review Center, inspect a supported finding linked to a training image, and record a reasoned confirmation only when the evidence warrants it. If no eligible issue exists, the experiment correctly remains unavailable. The **Create synthetic test dataset** action creates a separate sandbox with planted software-test defects; review its findings manually rather than auto-confirming them.
+- **Failure Explorer:** check the Baseline readiness panel first. If it reports blockers, fix the split, sample-count or class-support issue before training. A completed experiment record without its saved checkpoint is not enough; retrain if the panel says the checkpoint is missing.
+- **Reproducibility:** select a dataset, then use **Download reproducibility bundle** or **Verify file hashes** immediately. Previous experiments are not required. The experiment registry fills as completed, active and failed runs are recorded. The bundle contains metadata and evidence, not original images or model binaries.
+
+
 ## Debugging failed experiments
 
 Open **Analysis Jobs** (bell icon). Look for the latest job status and error reason. A failed baseline can result from a missing test split, too few independent test records after identity-screening, or insufficient class representation. A successful HTTP request to queue an experiment is not equivalent to a completed experiment.
@@ -77,7 +89,7 @@ A selectable target must have:
 - a held-out `test` partition;
 - no known exact-file or recorded decoded-pixel hash overlap.
 
-The worker performs an additional decoded-pixel identity check. Do not relabel classes or choose a different modality merely to bypass this gate. Matching names and modality do not prove clinical equivalence. If your authorized second dataset uses numeric MedMNIST class IDs while HAM10000 uses diagnosis strings, create and independently verify an explicit label mapping before considering those datasets compatible; this UI does not infer that mapping.
+The worker performs an additional decoded-pixel identity check. Do not relabel classes or choose a different modality merely to bypass this gate. Matching names and modality do not prove clinical equivalence. If your authorized second dataset uses numeric MedMNIST class IDs while HAM10000 uses diagnosis strings, Cross-Dataset Lab now offers an explicit one-to-one mapping panel when the class counts match and the other compatibility checks pass. Map every target label to a distinct source class and confirm that the mapping is supported by the original dataset documentation. The application never guesses what a numeric class means. For example, do not compare PathMNIST histopathology with HAM10000 dermatoscopic images merely because the class counts happen to match.
 
 ## Impact Simulator: no confirmed training-image findings
 

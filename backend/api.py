@@ -13,7 +13,7 @@ from pydantic import BaseModel,Field
 from sqlalchemy import select,func
 from .db import Session,DATA_ROOT,ARTIFACT_ROOT,Dataset,Sample,Finding,Review,AuditRun,Experiment,Job,jd,jl,now
 from .security import safe_path,extract_auth,MAX_ARCHIVE_BYTES,MAX_NPZ_BYTES,sha_file,manifest_hash
-from .ingest import demo_dataset,import_zip,import_npz
+from .ingest import demo_dataset,import_zip,import_npz,SUPPORTED_MODALITIES
 from .large_import import CHUNK_BYTES,create_session,append_chunk,begin_processing,process_session,discard_session,status as large_import_status
 from .analysis_engine import forensic_graph,ranking_comparison
 from .labs import EXPERIMENT_RUNNERS,impact_readiness as lab_impact_readiness
@@ -54,6 +54,11 @@ class ReviewInput(BaseModel):
 class ExperimentInput(BaseModel):
     kind:Literal['baseline','shortcut','counterfactual','cross_dataset','impact','scenario']
     config:dict=Field(default_factory=dict)
+
+class ModalityConfirmation(BaseModel):
+    modality:str=Field(min_length=3,max_length=120)
+    source_documentation:str=Field(min_length=8,max_length=1000)
+    confirmed:bool=False
 
 
 def stamp(dt):return dt.astimezone(timezone.utc).isoformat().replace('+00:00','Z') if dt and dt.tzinfo else (dt.isoformat()+'Z' if dt else None)
@@ -121,7 +126,7 @@ def add_demo(payload:DemoInput):
     return {'dataset_id':demo_dataset(payload.seed,payload.count),'message':'Generated synthetic geometry, not clinical images'}
 
 @app.post('/api/datasets/import')
-async def import_dataset(file:UploadFile=File(...),name:str=Form(...),source:str=Form('Local upload'),license:str=Form('Unspecified; verify authorization'),modality:str=Form('Biomedical 2D image'),max_per_split:int=Form(500)):
+async def import_dataset(file:UploadFile=File(...),name:str=Form(...),source:str=Form('Local upload'),license:str=Form('Unspecified; verify authorization'),modality:str=Form('Other / unspecified'),max_per_split:int=Form(500)):
     if len(name.strip())<2 or len(name)>200:raise HTTPException(422,'Dataset name must have 2–200 characters')
     filename=(file.filename or '').lower()
     if not filename.endswith(('.npz','.zip')):raise HTTPException(415,'Upload a MedMNIST .npz or .zip containing samples.csv and images')
@@ -139,7 +144,7 @@ async def import_dataset(file:UploadFile=File(...),name:str=Form(...),source:str
                 if size>upload_limit:raise HTTPException(413,f'{suffix.upper()[1:]} package exceeds local upload cap ({upload_limit_label}); choose a smaller source archive')
                 f.write(chunk)
         try:
-            if suffix=='.npz':did=import_npz(p,name,source,license,max_per_split)
+            if suffix=='.npz':did=import_npz(p,name,source,license,max_per_split,modality)
             else:did=import_zip(p,name,source,license,modality)
             return {'dataset_id':did,'message':'Imported locally; verify source license and group metadata.'}
         except (ValueError,OSError,KeyError) as ex:raise HTTPException(422,str(ex))
@@ -155,7 +160,7 @@ class LargeImportStart(BaseModel):
     name: str = Field(min_length=2,max_length=200)
     source: str = Field(default='Local research dataset',max_length=255)
     license: str = Field(default='Verify original dataset license',max_length=250)
-    modality: str = Field(default='Biomedical 2D image',max_length=120)
+    modality: str = Field(default='Other / unspecified',max_length=120)
     files: list[LargeImportFile] = Field(min_length=1,max_length=6)
     max_per_split: int = Field(default=500,ge=10,le=10000)
 
@@ -274,6 +279,32 @@ def _baseline_readiness(db,did):
             'last_attempt':last,
             'note':'Preflight is not a trained model or a clinical validity assessment. Image-content leakage is verified again by the worker.'}
 
+@app.patch('/api/datasets/{did}/modality')
+def confirm_dataset_modality(did:str,payload:ModalityConfirmation):
+    allowed=SUPPORTED_MODALITIES
+    if payload.confirmed is not True:
+        raise HTTPException(422,'Confirm that the modality was checked against the original dataset documentation.')
+    if payload.modality not in allowed:
+        raise HTTPException(422,'Choose one of the supported modality declarations.')
+    note=payload.source_documentation.strip()
+    if len(note)<8:
+        raise HTTPException(422,'Provide a dataset documentation title or source reference (at least 8 characters).')
+    with Session() as db:
+        d=get_dataset(db,did)
+        metadata=jl(d.meta)
+        history=metadata.get('modality_attestations',[])
+        if not isinstance(history,list):history=[]
+        attestation={'previous_modality':d.modality,'confirmed_modality':payload.modality,
+                     'source_documentation':note,'confirmed_utc':now().isoformat()}
+        history.append(attestation)
+        metadata['modality_attestations']=history
+        d.meta=jd(metadata)
+        d.modality=payload.modality
+        db.commit()
+        count=db.scalar(select(func.count(Sample.id)).where(Sample.dataset_id==did))
+        return {'dataset':dataset_out(d,count),'attestation':attestation,
+                'note':'The declared modality was updated based on the researcher-provided documentation reference. Image content and labels were not independently verified.'}
+
 @app.get('/api/datasets/{did}/baseline-readiness')
 def baseline_readiness(did:str):
     with Session() as db:
@@ -300,8 +331,17 @@ def _cross_dataset_readiness(db,did):
         reasons=[]
         if not valid_rows:
             reasons.append('This collection has no decodable image records.')
-        if source.modality!=target.modality:
+        generic_modalities={'biomedical 2d image','other / unspecified','unspecified','unknown'}
+        source_modality=(source.modality or '').strip().lower()
+        target_modality=(target.modality or '').strip().lower()
+        if source_modality in generic_modalities or target_modality in generic_modalities:
+            reasons.append('A specific imaging modality must be declared for both datasets before cross-dataset evaluation.')
+        elif source.modality!=target.modality:
             reasons.append('Declared modality does not match the source collection.')
+        source_provenance=(source.name+' '+source.source).lower()
+        target_provenance=(target.name+' '+target.source).lower()
+        if ('ham10000' in source_provenance and 'dermamnist' in target_provenance) or ('dermamnist' in source_provenance and 'ham10000' in target_provenance):
+            reasons.append('Known dataset lineage: DermaMNIST is derived from HAM10000 and cannot serve as an independent external target for it.')
         if not any(sample.split=='test' for sample in valid_rows):
             reasons.append('The target collection has no decodable held-out test partition.')
         target_hashes={sample.sha256 for sample in valid_rows if sample.sha256}
@@ -313,8 +353,9 @@ def _cross_dataset_readiness(db,did):
         if pixel_overlap:
             reasons.append(f'{pixel_overlap} target image(s) share recorded decoded-pixel hashes with the source.')
         label_mapping_required=bool(labels and source_train_labels!=labels)
-        mapping_eligible=bool(label_mapping_required and len(source_train_labels)==len(labels) and not reasons)
-        if label_mapping_required and not mapping_eligible:
+        same_class_count=len(source_train_labels)==len(labels)
+        mapping_eligible=bool(label_mapping_required and same_class_count and not reasons)
+        if label_mapping_required and not same_class_count:
             reasons.append('Label vocabularies differ and cannot be paired one-to-one because their class counts differ.')
         compatible=not reasons and not label_mapping_required
         selectable=compatible or mapping_eligible
@@ -510,6 +551,8 @@ def create_experiment(did:str,payload:ExperimentInput):
             if not target or not target['selectable']:
                 detail=' '.join(target['reasons']) if target else 'Choose a second dataset that is already imported.'
                 raise HTTPException(422,'Cross-Dataset Lab cannot start: '+detail)
+            if payload.config.get('independence_confirmed') is not True:
+                raise HTTPException(422,'Confirm from the dataset provenance that the target is independently collected and is not a subset, resize, augmentation or re-export of the source.')
             if target['mapping_eligible']:
                 mapping=payload.config.get('target_label_mapping')
                 source_labels=set(readiness['source']['training_labels'])
