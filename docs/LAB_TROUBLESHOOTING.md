@@ -37,6 +37,17 @@ All application experiments are software-only and research-only. They do not cer
 
 `MDF_ACCESS_TOKEN` is **optional**. If not set, the local server on `127.0.0.1` does not need a password and the token field can be left empty. If you explicitly set `MDF_ACCESS_TOKEN` in PowerShell **before launching the app**, enter that exact secret in **Privacy & Integrity** so the browser can access protected API routes. The token is stored in session storage for the current browser tab. Do **not** paste the token into GitHub, screenshots, or chat. Do not use the loopback prototype for identifiable patient data or as a publicly exposed server.
 
+## Repairing repeated baseline and graph failures
+
+Use the **Baseline readiness** section in Model Failure Explorer before starting a new run. It displays train/test counts, per-class training support, prerequisite failures, warnings, and the error from the latest baseline job. If an older model record says "completed" but its saved checkpoint was deleted, retrain: downstream labs require the real file.
+
+Previously imported class-sorted NPZ subsets do not change in place. Re-import the original authorized NPZ to use deterministic class-preserving sampling; inspect the dataset's sampling manifest and label distribution. Low-support classes are supported for software smoke tests but **not** for reliability or biomedical-model validity claims.
+
+Graph connections require a completed forensic audit and at least one detector-supported image/finding link. Isolated dataset records are not a broken connection and must not be drawn as invented edges. Ranking Compare similarly requires actual audited findings.
+
+A shortcut-sensitivity result uses the baseline's leakage-screened held-out test records. Cross-dataset experiments reject exact file duplicates and re-encoded pixel-identical content; neither screen alone establishes patient independence.
+
+
 ## Debugging failed experiments
 
 Open **Analysis Jobs** (bell icon). Look for the latest job status and error reason. A failed baseline can result from a missing test split, too few independent test records after identity-screening, or insufficient class representation. A successful HTTP request to queue an experiment is not equivalent to a completed experiment.
