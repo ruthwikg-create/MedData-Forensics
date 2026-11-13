@@ -169,8 +169,6 @@ class LargeImportStart(BaseModel):
 def initialize_large_import(payload: LargeImportStart):
     """Initialize a disk-backed upload rather than buffering >1 GB in an HTTP form."""
     try:
-        if payload.modality not in SUPPORTED_MODALITIES:
-            raise ValueError('Choose a supported imaging modality before starting the import')
         record = create_session(payload.name,payload.source,payload.license,payload.modality,
                                 [entry.model_dump() for entry in payload.files],payload.max_per_split)
         return {**record,'chunk_bytes':CHUNK_BYTES}
