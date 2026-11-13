@@ -6,7 +6,7 @@ from PIL import Image
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from backend.api import app
-from backend.db import Session,Sample
+from backend.db import Session,Sample,Dataset
 from backend.security import safe_path
 from backend.worker import run_one
 
@@ -67,3 +67,72 @@ def test_cross_dataset_refuses_same_pixels_after_png_reencoding():
         failed=finish(client,external['job_id'])
         assert failed['status']=='failed',failed
         assert 'decoded source pixels' in failed['error']
+
+
+def test_cross_dataset_readiness_explains_missing_or_incompatible_target_and_blocks_launch():
+    with TestClient(app) as client:
+        source_id=client.post('/api/datasets/demo',json={'count':48,'seed':231}).json()['dataset_id']
+        target_id=client.post('/api/datasets/demo',json={'count':48,'seed':232}).json()['dataset_id']
+        empty=client.get(f'/api/datasets/{source_id}/cross-dataset-readiness').json()
+        assert len(empty['targets'])==1
+        assert empty['targets'][0]['id']==target_id
+        assert empty['targets'][0]['compatible'] is True
+        assert empty['baseline_ready'] is False
+
+        baseline=client.post(f'/api/datasets/{source_id}/experiments',
+            json={'kind':'baseline','config':{'seed':42}}).json()
+        assert finish(client,baseline['job_id'])['status']=='completed'
+        ready=client.get(f'/api/datasets/{source_id}/cross-dataset-readiness').json()
+        assert ready['baseline_ready'] is True
+        assert next(item for item in ready['targets'] if item['id']==target_id)['compatible'] is True
+
+        with Session() as db:
+            db.get(Dataset,target_id).modality='Histopathology'
+            db.commit()
+        incompatible=client.get(f'/api/datasets/{source_id}/cross-dataset-readiness').json()
+        target=next(item for item in incompatible['targets'] if item['id']==target_id)
+        assert target['compatible'] is False
+        assert any('modality' in reason.lower() for reason in target['reasons'])
+        blocked=client.post(f'/api/datasets/{source_id}/experiments',
+            json={'kind':'cross_dataset','config':{'target_dataset_id':target_id}})
+        assert blocked.status_code==422
+        assert 'modality' in blocked.json()['detail'].lower()
+
+
+def test_impact_readiness_blocks_empty_run_then_allows_confirmed_train_evidence():
+    with TestClient(app) as client:
+        did=client.post('/api/datasets/demo',json={'count':64,'seed':42}).json()['dataset_id']
+        initial=client.get(f'/api/datasets/{did}/impact-readiness').json()
+        assert initial['ready'] is False
+        assert initial['audit_completed'] is False
+        assert any('Forensic Audit' in reason for reason in initial['reasons'])
+        blocked=client.post(f'/api/datasets/{did}/experiments',
+            json={'kind':'impact','config':{'seed':42}})
+        assert blocked.status_code==422
+        assert 'Impact Simulator cannot start' in blocked.json()['detail']
+
+        audit=client.post(f'/api/datasets/{did}/audit').json()
+        assert finish(client,audit['job_id'])['status']=='completed'
+        findings=client.get(f'/api/datasets/{did}/findings?size=200').json()['items']
+        train_ids={item['id'] for item in client.get(
+            f'/api/datasets/{did}/samples?split=train&size=100').json()['items']}
+        supported={'split_leakage','group_overlap','exact_duplicate','pixel_duplicate','near_duplicate','label_suspicion'}
+        finding=next(item for item in findings if item['kind'] in supported and
+            any(sid in train_ids for sid in (item['sample_id'],item['linked_id']) if sid))
+        review=client.post(f"/api/findings/{finding['id']}/review",
+            json={'reviewer':'QA researcher','decision':'confirmed',
+                  'notes':'Confirmed after inspecting the linked training image evidence.'})
+        assert review.status_code==200
+
+        ready=client.get(f'/api/datasets/{did}/impact-readiness').json()
+        assert ready['ready'] is True,ready
+        assert ready['confirmed_training_samples']>=1
+        assert ready['confirmed_exclusions_in_model_fit']>=1
+        experiment=client.post(f'/api/datasets/{did}/experiments',
+            json={'kind':'impact','config':{'seed':42}})
+        assert experiment.status_code==200,experiment.text
+        result=finish(client,experiment.json()['job_id'])
+        assert result['status']=='completed',result
+        output=client.get('/api/experiments/'+experiment.json()['experiment_id']).json()['result']
+        assert output['removed_count']>=1
+        assert output['evaluation_test_ids_sha256']
