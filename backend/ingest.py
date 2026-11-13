@@ -8,6 +8,12 @@ from sqlalchemy import select
 from .db import DATA_ROOT,Session,Dataset,Sample,uid,jd
 from .security import image_info,sha_file,safe_path,MAX_ARCHIVE_BYTES,MAX_NPZ_BYTES,ALLOWED_EXT,manifest_hash
 
+SUPPORTED_MODALITIES=frozenset({
+    'Dermatoscopic / skin lesion images','Histopathology / microscopy',
+    'Radiology / X-ray','Ultrasound','MRI','CT',
+    'Fundus / retinal images','Other / unspecified'
+})
+
 DEMO_LABELS=['pattern_a','pattern_b']  # explicitly synthetic and nonmedical
 
 def _dataset(name,source,license,modality,description,synthetic=False,metadata=None,parent_id=None):
@@ -85,6 +91,7 @@ def _stratified_subset_indices(labels, limit, seed=42):
 
 def import_npz(path,name,source='MedMNIST',license='Check upstream source dataset license',max_samples_per_split=2000,modality='Other / unspecified'):
     """MedMNIST-compatible arrays only; bounded extraction, no pickle."""
+    if modality not in SUPPORTED_MODALITIES: raise ValueError('Unsupported imaging modality declaration')
     if max_samples_per_split<10 or max_samples_per_split>10000: raise ValueError('max_samples_per_split must be 10–10000')
     path=Path(path)
     if path.stat().st_size>MAX_NPZ_BYTES:raise ValueError('NPZ upload exceeds 256 MiB safety cap; select a smaller variant')
@@ -137,6 +144,7 @@ def import_npz(path,name,source='MedMNIST',license='Check upstream source datase
 
 def import_zip(path,name,source='User-provided image/CSV package',license='Unspecified; verify authorization', modality='Other / unspecified'):
     """ZIP must contain samples.csv and image files; strict traversal/size limits."""
+    if modality not in SUPPORTED_MODALITIES: raise ValueError('Unsupported imaging modality declaration')
     path=Path(path)
     if path.stat().st_size>MAX_ARCHIVE_BYTES:raise ValueError('ZIP upload exceeds 150MB limit')
     with zipfile.ZipFile(path) as z:
