@@ -26,7 +26,7 @@ def _model(train,seed=42,max_train=2400):
     counts=Counter(x.label for x in train)
     if min(counts.values())<3:raise ValueError('Insufficient samples per class')
     x=np.vstack([extract_features(safe_path(s.relpath)) for s in train]);y=np.array([s.label for s in train]);
-    model=LogisticRegression(max_iter=350,class_weight='balanced',solver='liblinear',random_state=seed)
+    model=LogisticRegression(max_iter=500,class_weight='balanced',solver='lbfgs',random_state=seed)
     model.fit(x,y)
     return model
 
