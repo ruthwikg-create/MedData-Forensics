@@ -58,6 +58,31 @@ def demo_dataset(seed=42,count=128):
         (DATA_ROOT/d.id/'synthetic_truth.json').write_text(json.dumps(truth,indent=2),encoding='utf-8')
         return d.id
 
+def _stratified_subset_indices(labels, limit, seed=42):
+    """Deterministic class-preserving subset; source indices remain traceable."""
+    labels=np.asarray(labels).reshape(-1)
+    if len(labels)<=limit:return np.arange(len(labels),dtype=np.int64)
+    classes,inverse,counts=np.unique(labels,return_inverse=True,return_counts=True)
+    if len(classes)>limit:
+        raise ValueError(f'Subset limit {limit} cannot preserve all {len(classes)} classes; increase maximum images per split')
+    allocation=np.ones(len(classes),dtype=np.int64)
+    capacity=counts-allocation
+    remaining=limit-len(classes)
+    if remaining:
+        fractional=remaining*capacity/capacity.sum()
+        allocation+=np.floor(fractional).astype(np.int64)
+        extras=limit-int(allocation.sum())
+        order=sorted(range(len(classes)),key=lambda j:(-(fractional[j]-np.floor(fractional[j])),-int(capacity[j]),int(j)))
+        for j in order:
+            if extras==0:break
+            if allocation[j]<counts[j]:
+                allocation[j]+=1
+                extras-=1
+    rng=np.random.default_rng(seed)
+    selected=np.concatenate([rng.choice(np.flatnonzero(inverse==j),size=int(take),replace=False) for j,take in enumerate(allocation)])
+    return np.sort(selected)
+
+
 def import_npz(path,name,source='MedMNIST',license='Check upstream source dataset license',max_samples_per_split=2000):
     """MedMNIST-compatible arrays only; bounded extraction, no pickle."""
     if max_samples_per_split<10 or max_samples_per_split>10000: raise ValueError('max_samples_per_split must be 10–10000')
@@ -79,23 +104,34 @@ def import_npz(path,name,source='MedMNIST',license='Check upstream source datase
                 raise ValueError('NPZ images must be uint8 and class labels must be integers')
             if y.ndim>2 or (y.ndim==2 and y.shape[1]!=1):raise ValueError('Only single-label classification supported')
             n=min(len(x),max_samples_per_split)
-            arrays.append((split,x[:n].copy(),y[:n].reshape(-1).copy()))
-            sizes[split]={'source_count':int(len(x)),'imported_count':n}
-            labels_seen.update(str(int(t)) for t in y[:n].reshape(-1))
+            all_labels=y.reshape(-1)
+            indices=_stratified_subset_indices(all_labels,n,seed=42)
+            chosen_labels=all_labels[indices].copy()
+            arrays.append((split,indices,x[indices].copy(),chosen_labels))
+            source_classes,source_counts=np.unique(all_labels,return_counts=True)
+            selected_classes,selected_counts=np.unique(chosen_labels,return_counts=True)
+            sizes[split]={'source_count':int(len(x)),'imported_count':int(len(indices)),
+                          'source_class_counts':{str(int(k)):int(v) for k,v in zip(source_classes,source_counts)},
+                          'imported_class_counts':{str(int(k)):int(v) for k,v in zip(selected_classes,selected_counts)},
+                          'sampling_policy':'all_images' if len(indices)==len(x) else 'deterministic_class_preserving_seed_42',
+                          'evaluation_warning':'Class-preserving subset may not represent source prevalence; never report it as full-dataset evaluation.'}
+            labels_seen.update(str(int(t)) for t in chosen_labels)
     with Session() as db:
         d=_dataset(name,source,license,'Biomedical 2D image','MedMNIST-compatible NPZ import (bounded, no data downloaded automatically)',False,{'sampling':sizes,'subset':any(v['source_count']!=v['imported_count'] for v in sizes.values()),'label_ids':sorted(labels_seen)})
         db.add(d);db.flush()
         dest=DATA_ROOT/d.id/'images';dest.mkdir(parents=True,exist_ok=True)
         samples=[]
-        for split,imgs,labels in arrays:
-            for i,(image,label) in enumerate(zip(imgs,labels)):
+        for split,source_indices,imgs,labels in arrays:
+            for source_index,image,label in zip(source_indices,imgs,labels):
                 ar=np.asarray(image)
                 if ar.ndim==2:im=Image.fromarray(ar.astype('uint8'),'L')
                 elif ar.ndim==3 and ar.shape[-1] in (1,3,4):im=Image.fromarray(ar.squeeze(-1).astype('uint8') if ar.shape[-1]==1 else ar.astype('uint8'))
                 else:raise ValueError('Unexpected channel shape')
-                filename=f'{split}_{i:05d}.png';im.save(dest/filename)
+                filename=f'{split}_{int(source_index):05d}.png';im.save(dest/filename)
                 p=dest/filename
-                samples.append(Sample(dataset_id=d.id,sample_id=f'{split}-{i:05d}',relpath=f'{d.id}/images/{filename}',label=str(int(label)),split=split,sha256=sha_file(p),width=im.width,height=im.height,meta='{}'))
+                samples.append(Sample(dataset_id=d.id,sample_id=f'{split}-{int(source_index):05d}',relpath=f'{d.id}/images/{filename}',
+                    label=str(int(label)),split=split,sha256=sha_file(p),width=im.width,height=im.height,
+                    meta=jd({'source_index':int(source_index),'sampling_policy':sizes[split]['sampling_policy']})))
         db.add_all(samples);d.manifest_hash=manifest_hash(samples);db.commit()
         return d.id
 
