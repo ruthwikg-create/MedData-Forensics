@@ -121,7 +121,7 @@ def add_demo(payload:DemoInput):
     return {'dataset_id':demo_dataset(payload.seed,payload.count),'message':'Generated synthetic geometry, not clinical images'}
 
 @app.post('/api/datasets/import')
-async def import_dataset(file:UploadFile=File(...),name:str=Form(...),source:str=Form('Local upload'),license:str=Form('Unspecified; verify authorization'),modality:str=Form('Biomedical 2D image'),max_per_split:int=Form(500)):
+async def import_dataset(file:UploadFile=File(...),name:str=Form(...),source:str=Form('Local upload'),license:str=Form('Unspecified; verify authorization'),modality:str=Form('Other / unspecified'),max_per_split:int=Form(500)):
     if len(name.strip())<2 or len(name)>200:raise HTTPException(422,'Dataset name must have 2–200 characters')
     filename=(file.filename or '').lower()
     if not filename.endswith(('.npz','.zip')):raise HTTPException(415,'Upload a MedMNIST .npz or .zip containing samples.csv and images')
@@ -139,7 +139,7 @@ async def import_dataset(file:UploadFile=File(...),name:str=Form(...),source:str
                 if size>upload_limit:raise HTTPException(413,f'{suffix.upper()[1:]} package exceeds local upload cap ({upload_limit_label}); choose a smaller source archive')
                 f.write(chunk)
         try:
-            if suffix=='.npz':did=import_npz(p,name,source,license,max_per_split)
+            if suffix=='.npz':did=import_npz(p,name,source,license,max_per_split,modality)
             else:did=import_zip(p,name,source,license,modality)
             return {'dataset_id':did,'message':'Imported locally; verify source license and group metadata.'}
         except (ValueError,OSError,KeyError) as ex:raise HTTPException(422,str(ex))
@@ -155,7 +155,7 @@ class LargeImportStart(BaseModel):
     name: str = Field(min_length=2,max_length=200)
     source: str = Field(default='Local research dataset',max_length=255)
     license: str = Field(default='Verify original dataset license',max_length=250)
-    modality: str = Field(default='Biomedical 2D image',max_length=120)
+    modality: str = Field(default='Other / unspecified',max_length=120)
     files: list[LargeImportFile] = Field(min_length=1,max_length=6)
     max_per_split: int = Field(default=500,ge=10,le=10000)
 
@@ -300,7 +300,12 @@ def _cross_dataset_readiness(db,did):
         reasons=[]
         if not valid_rows:
             reasons.append('This collection has no decodable image records.')
-        if source.modality!=target.modality:
+        generic_modalities={'biomedical 2d image','other / unspecified','unspecified','unknown'}
+        source_modality=(source.modality or '').strip().lower()
+        target_modality=(target.modality or '').strip().lower()
+        if source_modality in generic_modalities or target_modality in generic_modalities:
+            reasons.append('A specific imaging modality must be declared for both datasets before cross-dataset evaluation.')
+        elif source.modality!=target.modality:
             reasons.append('Declared modality does not match the source collection.')
         if not any(sample.split=='test' for sample in valid_rows):
             reasons.append('The target collection has no decodable held-out test partition.')
