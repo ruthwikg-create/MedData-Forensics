@@ -204,7 +204,8 @@ async function openLargeImport(){
  let resume=false;
  $('#largeImportResume').addEventListener('click',()=>{
   resume=true;
-  // Resume may only need the persisted server-side indexing state.
+  // The server-side session already retains its original modality and file metadata.
+  if(!$('#largeImportModality').value)$('#largeImportModality').value='Other / unspecified';
   startButton.disabled=false;
   $('#largeImportForm').requestSubmit();
   if(!datasetImportInProgress)renderFileQueue();
