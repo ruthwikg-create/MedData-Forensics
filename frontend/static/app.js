@@ -594,7 +594,7 @@ function renderCross(){
  return html;
 }
 function renderImpact(){
- const {html,e}=labBase('INTERVENTION ANALYSIS','Audit Impact Simulator','Compare frozen-test performance before and after removing reviewer-confirmed training samples.','impact','Run removal-only ablation');
+ let {html,e}=labBase('INTERVENTION ANALYSIS','Audit Impact Simulator','Compare frozen-test performance before and after removing reviewer-confirmed training samples.','impact','Run removal-only ablation');
  if(!state.detail)return html;
  const r=state.impactReadiness||{ready:false,reasons:['Checking the evidence and training split…']};
  if(!r.ready){
