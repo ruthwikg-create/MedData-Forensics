@@ -63,7 +63,7 @@ def test_cross_dataset_refuses_same_pixels_after_png_reencoding():
         assert target.status_code==200,target.text
         target_id=target.json()['dataset_id']
         external=client.post(f'/api/datasets/{source_id}/experiments',
-            json={'kind':'cross_dataset','config':{'target_dataset_id':target_id}}).json()
+            json={'kind':'cross_dataset','config':{'target_dataset_id':target_id,'independence_confirmed':True}}).json()
         failed=finish(client,external['job_id'])
         assert failed['status']=='failed',failed
         assert 'decoded source pixels' in failed['error']
@@ -159,19 +159,19 @@ def test_cross_dataset_accepts_only_confirmed_one_to_one_label_mapping():
         assert candidate['selectable'] is True
 
         missing=client.post(f'/api/datasets/{source_id}/experiments',
-            json={'kind':'cross_dataset','config':{'target_dataset_id':target_id}})
+            json={'kind':'cross_dataset','config':{'target_dataset_id':target_id,'independence_confirmed':True}})
         assert missing.status_code==422
         assert 'one-to-one' in missing.json()['detail'].lower()
 
         invalid=client.post(f'/api/datasets/{source_id}/experiments',
             json={'kind':'cross_dataset','config':{
-                'target_dataset_id':target_id,
+                'target_dataset_id':target_id,'independence_confirmed':True,
                 'target_label_mapping':{'0':'pattern_a','1':'pattern_a'},
                 'label_mapping_confirmed':True}})
         assert invalid.status_code==422
         assert 'one-to-one' in invalid.json()['detail'].lower()
 
-        config={'target_dataset_id':target_id,
+        config={'target_dataset_id':target_id,'independence_confirmed':True,
                 'target_label_mapping':{'0':'pattern_a','1':'pattern_b'},
                 'label_mapping_confirmed':True}
         accepted=client.post(f'/api/datasets/{source_id}/experiments',
