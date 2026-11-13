@@ -1,7 +1,7 @@
 # MedData Forensics
 
 <p align="center">
-  <img src="assets/meddata-forensics-logo.png" alt="MedData Forensics — biomedical dataset investigation and AI reliability research" width="460">
+  <img src="assets/meddata-forensics-logo-white.svg" alt="MedData Forensics wordmark on a white background" width="460">
 </p>
 
 **Local-first biomedical AI dataset investigation and reproducibility workbench.**
@@ -11,6 +11,15 @@
 **Current release: v0.9.2 interactive research labs and import feedback.**
 
 MedData Forensics imports image classification datasets, identifies potential data-integrity risks with inspectable evidence, lets researchers review findings, and runs CPU-friendly comparative experiments. Every original dataset remains unchanged. No medical equipment, CUDA GPU, Docker or paid API required.
+
+## About the Creator
+
+**Goparaju Ruthwik** is a Biomedical Engineering student at the **University College of Engineering, Osmania University, Hyderabad**, with interests in **AI/ML for healthcare, medical imaging, biomedical research, and healthcare software development**.
+
+I build research-oriented software that helps make biomedical data more trustworthy and AI experiments easier to inspect. With MedData Forensics, my goal is to help researchers explore dataset integrity, potential leakage, model failure patterns, and reproducible evidence without claiming clinical validation where it has not been established.
+
+**GitHub:** [@ruthwikg-create](https://github.com/ruthwikg-create)
+
 
 
 
