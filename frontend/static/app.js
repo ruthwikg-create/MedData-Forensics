@@ -244,18 +244,77 @@ function renderCounterfactual(){
  return h;
 }
 
-function renderCross(){let {html,e}=labBase('GENERALIZATION TEST','Cross-Dataset Reliability Lab','Evaluate a frozen baseline model against a second, explicitly compatible research dataset.','cross_dataset','Run external evaluation');
+function renderCross(){
+ const data=state.crossReadiness||{source_baseline_ready:false,options:[]};
+ const options=data.options||[];
+ const selected=options.find(target=>target.id===state.crossTargetId);
+ const allowed=Boolean(data.source_baseline_ready&&selected?.eligible);
+ let {html,e}=labBase('GENERALIZATION TEST','Cross-Dataset Reliability Lab',
+  'Evaluate a frozen baseline model against a second, explicitly compatible research dataset.',
+  'cross_dataset','Run external evaluation',allowed,'Choose a compatible target dataset first');
  if(!state.detail)return html;
- html=html.replace('data-experiment="cross_dataset"','data-action="cross-launch"');
- const others=state.datasets.filter(d=>d.id!==state.did);
- html+=`<div class="card card-padded" style="margin-bottom:20px"><div class="card-title"><h3>External research collection</h3></div><div class="field"><label for="crossTarget">Target dataset</label><select class="select" id="crossTarget"><option value="">Choose a distinct collection</option>${others.map(d=>`<option value="${esc(d.id)}">${esc(d.name)} (${number(d.sample_count)} samples)</option>`).join('')}</select><small>The declared modality and complete label vocabulary must match. Text matches alone do not establish clinical compatibility.</small></div></div>`;
- if(e){const r=e.result,m=r.external_test?.metrics||{};html+=`<div class="stats-row">${stat('External macro-F1',metric(m.macro_f1),'Frozen model')}${stat('Balanced accuracy',metric(m.balanced_accuracy),'Target dataset')}${stat('Target samples',number(m.n),'Held-out target test')}${stat('Data source',short(r.target_dataset_id),'Target dataset ID')}</div>${notice((r.comparison_limits||[]).join(' '),'warn')}`;}
+ const eligible=options.filter(target=>target.eligible);
+ html+='<section class="card card-padded section-gap cross-prerequisite"><div class="card-title"><h3>External research collection</h3>'+pill(number(eligible.length)+' compatible','blue')+'</div>';
+ if(!data.source_baseline_ready)html+=notice('Complete Baseline Training first. A saved classifier is required for a frozen external evaluation.','warn');
+ if(!options.length){
+  html+='<p class="fine">No second dataset is available. Import a separate research collection with a compatible class vocabulary and declared modality, including a held-out test split.</p>'+
+   '<div class="actions">'+btn(icon('upload')+' Import another dataset','import','btn-primary')+'</div>';
+ }else{
+  html+='<div class="field"><label for="crossTarget">Target dataset</label><select class="select" id="crossTarget" aria-describedby="crossTargetHelp">'+
+   '<option value="">Choose a compatible external dataset</option>'+
+   options.map(target=>'<option value="'+esc(target.id)+'" '+(selected?.id===target.id?'selected ':'')+(target.eligible?'':'disabled ')+'>'+
+    esc(target.name)+(target.eligible?' · compatible':' · incompatible')+'</option>').join('')+'</select>'+
+   '<small id="crossTargetHelp">Both datasets must have the same recorded class vocabulary and declared modality, a target test split, and no identical source images. Matching metadata does not establish clinical comparability.</small></div>';
+  const incompatible=options.filter(target=>!target.eligible);
+  if(incompatible.length)html+='<details class="cross-issues"><summary>Why '+number(incompatible.length)+' collection(s) cannot be used</summary><ul>'+
+   incompatible.slice(0,15).map(target=>'<li><strong>'+esc(target.name)+'</strong>: '+esc(target.issues.join('; '))+'</li>').join('')+'</ul></details>';
+  if(!eligible.length)html+=notice('No compatible target currently exists. Import a distinct, properly licensed dataset with matching recorded classes and modality. A copy of the same images does not qualify.','warn')+
+   '<div class="actions">'+btn(icon('upload')+' Import target dataset','import','btn-primary')+'</div>';
+  else if(!selected)html+='<p class="lab-inline-hint" role="status">Select one of the compatible datasets above to enable external evaluation.</p>';
+  else html+='<p class="lab-inline-hint" role="status">'+esc(selected.name)+' · '+number(selected.test_count)+' target test samples. Evaluation is still exploratory.</p>';
+ }
+ html+='</section>';
+ if(e){const r=e.result||{},m=r.external_test?.metrics||{};
+  html+='<div class="stats-row">'+stat('External macro-F1',metric(m.macro_f1),'Frozen model')+
+  stat('Balanced accuracy',metric(m.balanced_accuracy),'Target dataset')+
+  stat('Target samples',number(m.n),'Held-out test partition')+
+  stat('Data source',short(r.target_dataset_id),'Evaluated dataset ID')+'</div>'+
+  notice((r.comparison_limits||[]).join(' '),'warn');
+ }
  return html;
 }
-function renderImpact(){const {html,e}=labBase('INTERVENTION ANALYSIS','Audit Impact Simulator','Compare frozen-test performance before and after removing reviewer-confirmed training samples.','impact','Run removal-only ablation');
+
+function renderImpact(){
+ const readiness=state.impactReadiness||{ready:false,reason:'Check the dataset prerequisites first.',eligible_exclusion_count:0,eligible_finding_count:0,training_count:0};
+ const {html:base,e}=labBase('INTERVENTION ANALYSIS','Audit Impact Simulator',
+  'Compare frozen-test performance before and after removing reviewer-confirmed training samples.',
+  'impact','Run removal-only ablation',Boolean(readiness.ready),readiness.reason);
+ if(!state.detail)return base;
+ let html=base+'<section class="card card-padded section-gap impact-prerequisite"><div class="card-title"><h3>Reviewer-confirmed exclusion readiness</h3>'+pill(readiness.ready?'Ready for controlled ablation':'Prerequisites missing',readiness.ready?'green':'amber')+'</div>'+
+  '<div class="impact-readiness-grid">'+
+   '<div><span>Confirmed findings</span><strong>'+number(readiness.confirmed_finding_count||0)+'</strong></div>'+
+   '<div><span>Eligible findings</span><strong>'+number(readiness.eligible_finding_count||0)+'</strong></div>'+
+   '<div><span>Training images to exclude</span><strong>'+number(readiness.eligible_exclusion_count||0)+'</strong></div>'+
+   '<div><span>Training images remaining</span><strong>'+number(readiness.remaining_train_count||0)+'</strong></div></div>';
+ if(!readiness.ready){
+  html+=notice(readiness.reason,'warn')+
+  '<p class="fine" style="margin:12px 0">Inspect each suspected finding and verify that the linked evidence concerns a training image. Only an explicit, evidence-based reviewer confirmation can justify removal. Do not confirm a concern merely to run a simulation.</p>'+
+  '<div class="actions">'+btn('Open Review Center','go-review','btn-primary')+' '+
+  btn('Run forensic audit','run-audit','')+'</div>';
+ }else html+='<p class="fine" style="margin-top:12px">The removal-only experiment will retain the original dataset and use the same held-out test cohort. Historical results are not automatically modified.</p>';
+ html+='</section>';
  if(!e)return html;
- const r=e.result;return html+`<div class="stats-row">${stat('Samples excluded',number(r.removed_count),'Training partition only')}${stat('Baseline macro-F1',metric(r.before?.macro_f1),'Original training set')}${stat('Curated macro-F1',metric(r.after?.macro_f1),'Removal-only ablation')}${stat('F1 change',(r.macro_f1_delta>=0?'+':'')+metric(r.macro_f1_delta),'Not necessarily improvement')}</div>${notice((r.limitations||[]).join(' '),'warn')}${card('Independent evaluation contract',`<dl><div class="kv"><dt>Original train count</dt><dd>${number(r.original_train_n)}</dd></div><div class="kv"><dt>Curated train count</dt><dd>${number(r.curated_train_n)}</dd></div><div class="kv"><dt>Frozen test fingerprint</dt><dd class="mono">${esc(r.evaluation_test_ids_sha256)}</dd></div></dl>`)}`;
+ const r=e.result||{};
+ return html+'<div class="stats-row">'+stat('Samples excluded',number(r.removed_count),'Training partition only')+
+ stat('Baseline macro-F1',metric(r.before?.macro_f1),'Original training set')+
+ stat('Curated macro-F1',metric(r.after?.macro_f1),'Removal-only ablation')+
+ stat('F1 change',(r.macro_f1_delta>=0?'+':'')+metric(r.macro_f1_delta),'Not necessarily an improvement')+
+ '</div>'+notice((r.limitations||[]).join(' '),'warn')+
+ card('Independent evaluation contract','<dl><div class="kv"><dt>Original train count</dt><dd>'+number(r.original_train_n)+
+ '</dd></div><div class="kv"><dt>Curated train count</dt><dd>'+number(r.curated_train_n)+'</dd></div><div class="kv"><dt>Frozen test fingerprint</dt><dd class="mono">'+
+ esc(r.evaluation_test_ids_sha256)+'</dd></div></dl>');
 }
+
 function renderFailures(){let html=head('PERFORMANCE INVESTIGATION','Model Failure Explorer','Inspect prediction mistakes, confusion matrices, uncertainty and performance across recorded source groups.',btn(icon('play')+' Run baseline','baseline-launch','btn-primary'));
  if(!state.detail)return html+needDataset();
  const e=bestExp('baseline');if(!e){const failed=state.detail?.experiments?.some(x=>x.kind==='baseline'&&x.status==='failed');return html+(failed?notice('The last baseline model failed. Open Analysis Jobs to read the error, then select Run baseline to retry after updating the software.','warn'):'')+empty('No completed model evaluation yet','Train the CPU baseline to examine test-split misclassifications. For failed attempts, use Analysis Jobs to review the exact error.',btn('Train baseline model','baseline-launch','btn-primary')+' '+btn('View failed jobs','jobs'));}
