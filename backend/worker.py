@@ -10,11 +10,35 @@ from .labs import EXPERIMENT_RUNNERS
 class Cancelled(Exception):pass
 
 def recover_jobs():
+    """Reconcile jobs left running when the previous single local worker stopped.
+
+    Recovery occurs at worker startup, not after an arbitrary timeout. Completed
+    targets are never rerun (which might duplicate derived datasets or exports).
+    The app is designed for one local worker, not parallel distributed workers.
+    """
     with Session() as db:
-        stale=db.scalars(select(Job).where(Job.status=='running')).all()
-        for j in stale:
-            if not j.updated_at or (now().replace(tzinfo=None)-j.updated_at.replace(tzinfo=None)).total_seconds()>600:
-                j.status='queued';j.message='Recovered an interrupted job'
+        interrupted=db.scalars(select(Job).where(Job.status=='running')).all()
+        for job in interrupted:
+            target=(db.get(AuditRun,job.target_id) if job.kind=='audit'
+                    else db.get(Experiment,job.target_id))
+            if target and target.status in ('completed','failed','cancelled'):
+                job.status=target.status
+                job.message=('Recovered completed result' if target.status=='completed'
+                             else 'Reconciled interrupted '+target.status+' task')
+                job.progress=100 if target.status=='completed' else min(99,job.progress or 0)
+                if target.status=='failed' and not job.error:
+                    job.error='The interrupted analysis is recorded as failed; inspect the experiment and retry.'
+            elif target:
+                job.status='queued'
+                job.progress=0
+                job.message='Recovered after local worker restart; queued to retry'
+                job.error=None
+                target.status='queued'
+            else:
+                job.status='failed'
+                job.message='Analysis target missing after restart'
+                job.error='Cannot resume: the associated audit or experiment record no longer exists.'
+            job.updated_at=now()
         db.commit()
 
 def run_one():

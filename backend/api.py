@@ -385,7 +385,16 @@ def cancel_job(jid:str):
         j=db.get(Job,jid)
         if not j:raise HTTPException(404,'Job not found')
         if j.status not in ('running','queued'):raise HTTPException(409,'Job is not active')
-        j.status='cancelled';j.message='Cancellation requested';db.commit()
+        was_queued=(j.status=='queued')
+        j.status='cancelled'
+        j.message='Cancelled before starting' if was_queued else 'Cancellation requested; stopping at the next progress checkpoint'
+        j.updated_at=now()
+        if was_queued:
+            target=db.get(AuditRun,j.target_id) if j.kind=='audit' else db.get(Experiment,j.target_id)
+            if target:
+                target.status='cancelled'
+                if isinstance(target,Experiment):target.finished_at=now()
+        db.commit()
         return job_out(j)
 
 @app.get('/api/datasets/{did}/report')
