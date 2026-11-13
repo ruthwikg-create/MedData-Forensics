@@ -16,6 +16,48 @@ Open `http://127.0.0.1:8765` in Chrome or Edge. To stop, use Ctrl+C in the same 
 
 If Windows doesn't recognize `py -3.11`, use a working `python` executable to create `.venv` manually. Don't change the PowerShell execution policy globally; the one-time `-ExecutionPolicy Bypass` argument is sufficient.
 
+
+## Large datasets: HAM10000 and multipart image ZIPs
+
+The **Import dataset** dialog now includes **Import large ZIP or HAM10000**. Use
+that option for ZIP archives larger than 150 MiB or datasets whose metadata CSV
+is supplied outside the ZIP. The existing quick importer is still suitable
+for MedMNIST NPZ files up to 256 MiB and small self-contained ZIP+samples.csv.
+
+For the original HAM10000 release, place these three authorized, unmodified
+files in the same folder and select them together using Ctrl+click:
+
+- `HAM10000_images_part_1.zip`
+- `HAM10000_images_part_2.zip`
+- `HAM10000_metadata.csv`
+
+The source metadata supplies image_id, dx, and lesion_id. The importer matches
+*every* metadata row against the selected archives before storing any
+dataset records; a lone image archive **cannot** supply labels. HAM10000's
+lesion ID groups images of a lesion, not necessarily independent patients.
+The generated deterministic 80/10/10 **lesion-grouped split is exploratory**,
+not an official challenge partition or patient-independent clinical evaluation.
+Review the original dataset terms; non-commercial conditions may apply.
+
+Large imports are transferred to the **local** FastAPI server in confirmed
+8 MiB chunks and persisted to the project `data/.pending-imports` directory.
+After transfer, indexing runs in a server-side background task and reports
+real indexed-image counts. The browser can reconnect to a persisted import
+session; reselect the same source files to resume an interrupted transfer.
+Use **Discard staged files** to release abandoned ZIPs. Once indexing succeeds,
+staged uploads are deleted while the indexed dataset remains.
+
+The software enforces 8 GiB/file, 12 GiB/session, 20 GiB total expanded ZIP,
+20 MiB per image, and 100,000 image records, plus disk-space checks. These are
+workstation resource safeguards, not claims of unlimited storage or multi-user
+hosting. Keep sufficient free space for the uploaded ZIPs **and** extracted
+indexed images simultaneously. Do not stop the local server during indexing.
+Avoid identifiable patient data on an insecure/shared computer.
+
+If an import fails, inspect the detailed message in the import dialog rather
+than increasing ZIP size limits or disabling decompression safeguards.
+
+
 ## Optional PostgreSQL 18
 
 The default SQLite mode is supported for one local user and the single background worker. If PostgreSQL is already installed and working, create an empty `meddata_forensics` DB and dedicated local user. Install `psycopg[binary]` then set `DATABASE_URL` in your PowerShell session before running the server. See README for the example syntax. No Docker required.

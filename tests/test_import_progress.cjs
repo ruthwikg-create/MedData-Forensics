@@ -50,3 +50,49 @@ test('different archive types use their separate hard limits',()=>{
  assert.equal(vm.runInContext("uploadLimitMiB('PATHMNIST.NPZ')",ctx),256);
  assert.ok(npz>zip);
 });
+
+test('large import uploader transfers only bounded chunks and reports server-confirmed bytes',async()=>{
+ const total=17*1024*1024;
+ const offsets=[];const steps=[];let accepted=0,processed=false;
+ const fakeFile={name:'large.zip',size:total,
+   slice:(a,b)=>({size:b-a,start:a,end:b})};
+ const response=(obj)=>({ok:true,status:200,headers:{get:()=>'application/json'},json:async()=>obj});
+ const fakeFetch=async(url,options={})=>{
+  if(url==='/api/datasets/import-large'&&options.method==='POST')
+   return response({id:'a'.repeat(32),phase:'uploading',chunk_bytes:8*1024*1024,files:[{name:'large.zip',size:total,received:0}]});
+  if(url.includes('/files/0?offset=')&&options.method==='PUT'){
+   const offset=Number(url.split('offset=')[1]);offsets.push(offset);
+   assert.equal(offset,accepted);
+   assert.ok(options.body.size<=8*1024*1024);
+   accepted+=options.body.size;
+   return response({files:[{received:accepted}],received_bytes:accepted,total_bytes:total});
+  }
+  if(url.endsWith('/process')&&options.method==='POST'){
+   assert.equal(accepted,total);processed=true;return response({phase:'queued'});
+  }
+  if(url.includes('/api/datasets/import-large/')&&(!options.method||options.method==='GET'))
+   return response({phase:processed?'completed':'uploading',dataset_id:processed?'demo':null,
+      files:[{name:'large.zip',size:total,received:accepted}],received_bytes:accepted,total_bytes:total});
+  throw Error('Unexpected request: '+url);
+ };
+ const values={};
+ const ctx=vm.createContext({XMLHttpRequest:class{},storage:{get:()=>null,set:(where,key,value)=>{values[key]=value}},
+  fetch:fakeFetch,FormData:class{},document:{querySelectorAll:()=>[]},window:{localStorage:{setItem:(key,value)=>{values[key]=value},getItem:()=>null},sessionStorage:{getItem:()=>null,setItem:()=>{}}},console,setTimeout:(fn)=>fn()});
+ vm.runInContext(renderSource,ctx,{filename:'app.js'});
+ const result=await vm.runInContext('uploadLargeResearchDataset([file],{name:"Sample",source:"Local"},onProgress,onIndex)',
+  Object.assign(ctx,{file:fakeFile,onProgress:x=>steps.push(x),onIndex:()=>{}}));
+ assert.equal(result.dataset_id,'demo');
+ assert.deepEqual(offsets,[0,8*1024*1024,16*1024*1024]);
+ assert.equal(accepted,total);
+ assert.equal(steps.at(-1),100);
+ assert.equal(values['mdf-large-upload-session'],'');
+});
+
+test('HAM10000 large uploader includes metadata and part integrity instructions',()=>{
+ assert.ok(source.includes('HAM10000_metadata.csv'));
+ assert.ok(source.includes('HAM10000_images_part_1.zip'));
+ assert.ok(source.includes('HAM10000_images_part_2.zip'));
+ assert.ok(source.includes('Import large ZIP or HAM10000'));
+ assert.ok(source.includes('Resume previous import'));
+ assert.ok(source.includes('Discard staged files'));
+});
