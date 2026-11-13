@@ -102,6 +102,7 @@ test('Cross-Dataset, Impact and Reproducibility work through their real UI contr
  await expect(page.getByRole('heading',{name:'Cross-Dataset Reliability Lab'})).toBeVisible();
  await expect(page.locator('#crossTarget')).toBeVisible();
  await page.locator('#crossTarget').selectOption(target);
+ await page.locator('#crossIndependenceConfirm').check();
  await page.locator('[data-action="cross-launch"]').click();
  let jobs=await (await request.get('/api/jobs')).json();
  let cross=jobs.filter(job=>job.kind==='cross_dataset').sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at)))[0];
