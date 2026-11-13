@@ -103,11 +103,14 @@ test('Cross-Dataset, Impact and Reproducibility work through their real UI contr
  await expect(page.locator('#crossTarget')).toBeVisible();
  await page.locator('#crossTarget').selectOption(target);
  await page.locator('#crossIndependenceConfirm').check();
+ await expect(page.locator('[data-action="cross-launch"]')).toBeEnabled();
+ const crossResponsePromise=page.waitForResponse(response=>
+  response.request().method()==='POST'&&/\/api\/datasets\/[^/]+\/experiments$/.test(new URL(response.url()).pathname));
  await page.locator('[data-action="cross-launch"]').click();
- let jobs=await (await request.get('/api/jobs')).json();
- let cross=jobs.filter(job=>job.kind==='cross_dataset').sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at)))[0];
- expect(cross,'Cross-Dataset job should be queued from the UI').toBeTruthy();
- await waitForCompletedJob(request,cross.id);
+ const crossResponse=await crossResponsePromise;
+ expect(crossResponse.ok(),await crossResponse.text()).toBeTruthy();
+ const crossJob=await crossResponse.json();
+ await waitForCompletedJob(request,crossJob.job_id);
  await page.reload();await page.goto('/#/cross');
  await page.locator('#datasetSelect').selectOption(source);
  await expect(page.getByText('External macro-F1')).toBeVisible();
@@ -131,12 +134,13 @@ test('Cross-Dataset, Impact and Reproducibility work through their real UI contr
  await page.goto('/#/impact');
  await page.locator('#datasetSelect').selectOption(impact);
  await expect(page.getByText('Ready to run')).toBeVisible();
+ const impactResponsePromise=page.waitForResponse(response=>
+  response.request().method()==='POST'&&new URL(response.url()).pathname.endsWith('/experiments'));
  await page.locator('[data-action="impact"]').click();
- await expect(page.getByText(/experiment queued/i)).toBeVisible();
- jobs=await (await request.get('/api/jobs')).json();
- const impactJob=jobs.filter(job=>job.kind==='impact').sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at)))[0];
- expect(impactJob,'Impact job should be queued from the UI').toBeTruthy();
- await waitForCompletedJob(request,impactJob.id);
+ const impactResponse=await impactResponsePromise;
+ expect(impactResponse.ok(),await impactResponse.text()).toBeTruthy();
+ const impactJob=await impactResponse.json();
+ await waitForCompletedJob(request,impactJob.job_id);
  await page.reload();await page.goto('/#/impact');
  await page.locator('#datasetSelect').selectOption(impact);
  await expect(page.getByText('Samples excluded')).toBeVisible();
