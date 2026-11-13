@@ -80,7 +80,7 @@ function bars(data,max=0,filter=''){
  const peak=max||Math.max(1,...entries.map(x=>Number(x[1])||0));
  return entries.length?entries.slice(0,20).map(([k,v])=>{
   const middle='<span class="bar-label" title="'+esc(k)+'">'+esc(k)+'</span>'+
-   '<span class="meter" aria-hidden="true"><span class="meter-fill" style="width:"'+Math.max(0,Math.min(100,100*Number(v)/peak))+'%"></span></span>'+
+   '<span class="meter" aria-hidden="true"><span class="meter-fill" style="width:'+Math.max(0,Math.min(100,100*Number(v)/peak))+'%"></span></span>'+
    '<span class="bar-val">'+number(v)+'</span>';
   return filter?'<button class="bar-row chart-bar" type="button" data-dna-chart="'+esc(filter)+
    '" data-dna-value="'+esc(k)+'" aria-label="Filter research images by '+esc(filter)+' '+esc(k)+', '+number(v)+' records">'+middle+'</button>':
