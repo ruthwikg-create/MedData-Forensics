@@ -123,3 +123,18 @@ def test_unsafe_zip_path_is_rejected():
         bio.seek(0)
         r=client.post('/api/datasets/import',data={'name':'Unsafe ZIP'},files={'file':('bad.zip',bio,'application/zip')})
         assert r.status_code==422
+
+
+def test_network_binding_without_secret_is_rejected(monkeypatch):
+    monkeypatch.delenv('MDF_ACCESS_TOKEN', raising=False)
+    monkeypatch.setenv('MDF_HOST', '0.0.0.0')
+    with TestClient(app) as client:
+        assert client.get('/api/overview').status_code == 401
+        assert client.post('/api/session').status_code == 401
+
+
+def test_loopback_without_secret_stays_usable(monkeypatch):
+    monkeypatch.delenv('MDF_ACCESS_TOKEN', raising=False)
+    monkeypatch.setenv('MDF_HOST', '127.0.0.1')
+    with TestClient(app) as client:
+        assert client.get('/api/overview').status_code == 200
