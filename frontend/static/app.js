@@ -616,6 +616,7 @@ function renderImpact(){
  let {html,e}=labBase('INTERVENTION ANALYSIS','Audit Impact Simulator','Compare frozen-test performance before and after removing reviewer-confirmed training samples.','impact','Run removal-only ablation');
  if(!state.detail)return html;
  const r=state.impactReadiness||{ready:false,reasons:['Checking the evidence and training split…']};
+ if(state.detail.dataset?.synthetic)html+=notice('This is a synthetic geometry sandbox with deliberately planted software-test defects. Results here validate the workflow only; they are not biomedical evidence.','warn');
  if(!r.ready){
   const launchButton='<button type="button" class="btn btn-primary" data-action="impact">'+icon('play')+' Run removal-only ablation</button>';
   html=html.replace(launchButton,'<button type="button" class="btn btn-primary" disabled aria-disabled="true">'+icon('lock')+' Complete prerequisites first</button>');
@@ -642,7 +643,9 @@ function renderImpact(){
   next='<div class="impact-next-steps"><strong>What to do next</strong><ol>'+steps.map(step=>'<li>'+esc(step)+'</li>').join('')+'</ol><p class="fine">Eligible evidence types: split leakage, group overlap, exact/pixel/near duplicates and label suspicion. A confirmation is a reviewer decision, not proof of a medical label error.</p>'+
    '<div class="actions">'+(!r.audit_completed?btn(icon('play')+' Run forensic audit','run-audit','btn-primary'):'')+
    btn('Open Review Center','go-review','btn-primary')+
-   btn('Open Forensic Audit','go-audit','btn')+'</div></div>';
+   btn('Open Forensic Audit','go-audit','btn')+
+   btn('Create synthetic test dataset','demo','btn')+'</div>'+
+   '<p class="fine">The synthetic option creates a separate sandbox with known planted defects. You must still inspect and record your own review decisions; it does not auto-confirm findings.</p></div>';
  }else{
   next='<div class="impact-ready-note"><strong>Evidence prerequisites satisfied.</strong><p>'+number(r.confirmed_training_samples)+
    ' distinct training image(s) are eligible for a removal-only comparison. The source dataset and held-out test records will remain unchanged.</p></div>';
@@ -714,10 +717,22 @@ function updateFailureExplorer(){
   button.classList.toggle('is-selected',pressed);
  });
 }
-function renderFailures(){let html=head('PERFORMANCE INVESTIGATION','Model Failure Explorer','Inspect prediction mistakes, confusion matrices, uncertainty and performance across recorded source groups.',btn(icon('play')+' Run baseline','baseline-launch','btn-primary'));
+function renderFailures(){
+ const readiness=state.baselineReadiness;
+ const trainButton=readiness?.ready===false?
+  '<button type="button" class="btn btn-primary" disabled aria-disabled="true">'+icon('lock')+' Resolve prerequisites first</button>':
+  btn(icon('play')+' Train / retry baseline','baseline-launch','btn-primary');
+ let html=head('PERFORMANCE INVESTIGATION','Model Failure Explorer','Inspect prediction mistakes, confusion matrices, uncertainty and performance across recorded source groups.',trainButton);
  if(!state.detail)return html+needDataset();
  html+=baselineReadinessPanel();
- const e=bestExp('baseline');if(!e){const failed=state.detail?.experiments?.some(x=>x.kind==='baseline'&&x.status==='failed');return html+(failed?notice('The last baseline model failed. Open Analysis Jobs to read the error, then select Run baseline to retry after updating the software.','warn'):'')+empty('No completed model evaluation yet','Train the CPU baseline to examine test-split misclassifications. For failed attempts, use Analysis Jobs to review the exact error.',btn('Train baseline model','baseline-launch','btn-primary')+' '+btn('View failed jobs','jobs'));}
+ const e=bestExp('baseline');if(!e){
+  const failed=state.detail?.experiments?.some(x=>x.kind==='baseline'&&x.status==='failed');
+  const action=readiness?.ready===false?
+   btn('Inspect dataset splits','go-dna','btn')+' '+btn('Create synthetic test dataset','demo','btn'):
+   btn('Train baseline model','baseline-launch','btn-primary')+' '+btn('Create synthetic test dataset','demo','btn');
+  return html+(failed?notice('The last baseline model failed. Open Analysis Jobs for its exact error. The readiness panel above shows whether another attempt can start.','warn'):'')+
+   empty('No completed model evaluation yet','A saved baseline checkpoint is required before prediction errors and the confusion matrix can be explored.',action+' '+btn('View analysis jobs','jobs','btn'));
+ }
  const r=e.result.test||{},m=r.metrics||{},errors=(r.predictions||[]).filter(x=>!x.correct);
  html+=notice('These are research-label disagreements from a lightweight model. Misclassification is not a verified clinical diagnosis error.');
  if(e.result.training_warnings?.length)html+=notice('Training cautions: '+e.result.training_warnings.join(' '),'warn');
@@ -730,9 +745,13 @@ function renderFailures(){let html=head('PERFORMANCE INVESTIGATION','Model Failu
  html+=renderFailureGallery(e);
  return html;
 }
-function renderRepro(){const d=state.detail?.dataset;let html=head('SCIENTIFIC TRACEABILITY','Reproducibility Engine','Reopen experiments, inspect immutable manifests and export transparent research audit records.',d?btn(icon('download')+' Export JSON report','download-json','btn-primary'):'');
+function renderRepro(){const d=state.detail?.dataset;let html=head('SCIENTIFIC TRACEABILITY','Reproducibility Engine','Inspect dataset fingerprints, verify source files and export traceable research records.',d?btn(icon('download')+' Download reproducibility bundle','download-repro','btn-primary')+' '+btn('Verify file hashes','verify-integrity','btn'):'');
  if(!d)return html+needDataset();
  const exps=state.detail.experiments||[];
+ const completed=exps.filter(item=>item.status==='completed').length,active=exps.filter(item=>['queued','running'].includes(item.status)).length,failed=exps.filter(item=>item.status==='failed').length;
+ html+=`<div class="stats-row">${stat('Recorded experiments',number(exps.length),'All statuses')}${stat('Completed',number(completed),'Available for inspection')}${stat('In progress',number(active),'Queued or running')}${stat('Failed',number(failed),'Details retained')}</div>`;
+ if(d.synthetic)html+=notice('This dataset is synthetic. Its manifests and exports are useful for testing reproducibility features, not for making biomedical claims.','warn');
+ html+=`<div class="info-stripe"><strong>How to use this page:</strong> You can verify hashes and export a reproducibility bundle immediately. The experiment registry fills as you complete baseline, audit and research-lab runs; it is not necessary to run every experiment before exporting.</div>`;
  html+=`<div class="two-col equal">${card('Dataset fingerprint',`<div class="eyebrow">SHA-256 MANIFEST</div><div class="mono-box">${esc(d.manifest_hash)}</div><p class="fine" style="margin-top:14px">Manifest fingerprints change when dataset membership or labels change. Source images remain unchanged in derived label scenarios.</p>`)}${card('Controlled scenario generator',`<p class="fine" style="margin-bottom:15px">Create a derived dataset version with seeded, known training-label corruption. Original images and labels remain unchanged.</p><div class="field-group"><div class="field"><label for="scenarioSeed">Fixed random seed</label><input class="input" id="scenarioSeed" type="number" value="42" min="1" max="999999"></div><div class="field"><label for="scenarioRate">Flip percentage</label><select class="select" id="scenarioRate"><option value="0.05">5%</option><option value="0.08" selected>8%</option><option value="0.12">12%</option></select></div></div>${btn(icon('play')+' Generate version','scenario-launch','btn-teal')}`)}</div>`;
  html+=`<section class="card card-padded section-gap"><div class="card-title"><h3>Source-file integrity check</h3>${pill('Read-only verification')}</div><p class="fine" style="margin-bottom:12px">Verify each local image against the SHA-256 stored at import and check the dataset version manifest. This does not verify medical labels, patient identity or licensing.</p>${btn(icon('shield')+' Verify dataset hashes','verify-integrity','btn-teal')}<div id="integrityResults" role="status" aria-live="polite"></div></section>`;
  html+=`<section class="card card-padded"><div class="card-title"><h3>Experiment registry</h3>${pill(number(exps.length)+' recorded')}</div>${exps.length?`<div class="table-wrap"><table class="tablesimple"><thead><tr><th>Experiment</th><th>Kind</th><th>Status</th><th>Created</th><th>Manifest</th></tr></thead><tbody>${exps.map(e=>`<tr><td class="mono">${esc(short(e.id))}</td><td>${esc(title(e.kind))}</td><td>${pill(e.status,e.status==='completed'?'green':e.status==='failed'?'red':'amber')}</td><td>${esc(String(e.created_at||'').split('T')[0])}</td><td><button type="button" class="btn btn-small" data-experiment-detail="${esc(e.id)}">Inspect</button></td></tr>`).join('')}</tbody></table></div>`:empty('No experiment records','Run the baseline or an audit laboratory to begin collecting reproducible evidence.')}</section>`;
@@ -1023,8 +1042,19 @@ async function openImport(){
 }
 async function openDemo(){openModal('Generate synthetic research sandbox',`<p class="fine" style="margin-bottom:18px">Creates geometric phantoms, not medical images. Known label flips, exact copies, near copies and group overlaps are injected so detectors can be sanity-tested.</p><div class="field-group"><div class="field"><label for="demoCount">Number of base patterns</label><input class="input" id="demoCount" type="number" min="40" max="1200" value="128"></div><div class="field"><label for="demoSeed">Generation seed</label><input class="input" id="demoSeed" type="number" min="1" max="999999" value="42"></div></div><div class="actions">${btn(icon('plus')+' Create training sandbox','create-demo','btn-primary')}</div>`)}
 async function createDemo(){const button=document.querySelector('[data-action="create-demo"]');if(button)button.disabled=true;const returnTo=state.view;try{const out=await api('/api/datasets/demo',{method:'POST',body:JSON.stringify({count:Number($('#demoCount').value),seed:Number($('#demoSeed').value)})});closeModal();state.did=out.dataset_id;storage.set('localStorage','mdf-dataset',out.dataset_id);await refresh(true);navigate(returnTo==='overview'?'dna':returnTo);toast('Created an entirely synthetic, local research sandbox.')}catch(e){toast(e.message,true);if(button)button.disabled=false}}
+async function createCrossDemoPair(){
+ const button=document.querySelector('[data-action="cross-demo-pair"]');if(button)button.disabled=true;
+ try{
+  const seed=(Math.floor(Date.now()/1000)%800000)+1000;
+  const source=await api('/api/datasets/demo',{method:'POST',body:JSON.stringify({seed,count:128})});
+  const target=await api('/api/datasets/demo',{method:'POST',body:JSON.stringify({seed:seed+1,count:128})});
+  state.did=source.dataset_id;storage.set('localStorage','mdf-dataset',source.dataset_id);
+  await refresh(true);await navigate('cross');
+  toast('Created two separate synthetic collections. Train the source baseline, then select the target. No medical images were generated.');
+ }catch(error){toast(error.message,true);if(button)button.disabled=false}
+}
 async function showExperiment(id){try{const e=await api('/api/experiments/'+id);openModal('Experiment manifest · '+title(e.kind),`<p class="fine">${esc(e.status)} · Research record ${esc(e.id)}</p><div class="scope-label" style="margin-top:18px">EXPERIMENT CONFIGURATION</div><div class="mono-box">${esc(JSON.stringify(e.config,null,2))}</div><div class="scope-label" style="margin-top:18px">RECORDED RESULT</div><div class="mono-box">${esc(JSON.stringify(e.result,null,2))}</div>`)}catch(e){toast(e.message,true)}}
-async function handleAction(action){switch(action){case 'import':return openImport();case 'large-import':return openLargeImport();case 'demo':return openDemo();case 'create-demo':return createDemo();case 'run-audit':return startAudit();case 'jobs':return openJobs();case 'jobs-history':return openJobs(true);case 'clear-job-notifications':return clearJobNotifications();case 'refresh':return refresh(true);case 'graph-zoom-in':state.graphUi.zoom=Math.min(1.5,Math.round((state.graphUi.zoom+0.25)*100)/100);return updateGraphExplorer();
+async function handleAction(action){switch(action){case 'import':return openImport();case 'large-import':return openLargeImport();case 'demo':return openDemo();case 'create-demo':return createDemo();case 'cross-demo-pair':return createCrossDemoPair();case 'run-audit':return startAudit();case 'jobs':return openJobs();case 'jobs-history':return openJobs(true);case 'clear-job-notifications':return clearJobNotifications();case 'refresh':return refresh(true);case 'graph-zoom-in':state.graphUi.zoom=Math.min(1.5,Math.round((state.graphUi.zoom+0.25)*100)/100);return updateGraphExplorer();
  case 'graph-zoom-out':state.graphUi.zoom=Math.max(0.75,Math.round((state.graphUi.zoom-0.25)*100)/100);return updateGraphExplorer();
  case 'graph-reset':state.graphUi={search:'',severity:'all',links:'all',zoom:1};$('#main').innerHTML=renderGraph();drawGraph(state.graph);return;
  case 'failure-reset':state.failureCell='';return updateFailureExplorer();
